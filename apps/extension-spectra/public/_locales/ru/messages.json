@@ -1,0 +1,10 @@
+{
+	"extName": {
+		"message": "SPECTRA - Усилитель громкости, EQ и управление медиа",
+		"description": "Extension name"
+	},
+	"extDescription": {
+		"message": "800% усиление, EQ, видео, пульт. 🔵🟣 Высокопроизводительный двойной режим, совместим со всеми сайтами.",
+		"description": "Extension description"
+	}
+}

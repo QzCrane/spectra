@@ -1,0 +1,11 @@
+# Build artifacts should go to dist/, not src/
+# This .gitignore prevents accidental commit of compiled files to source directory
+
+# Ignore compiled files in src/
+src/*.js
+src/*.js.map
+src/*.d.ts
+src/*.d.ts.map
+
+# dist/ is managed by turbo/pnpm, do not commit
+dist/

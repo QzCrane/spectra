@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+
+  <body>
+    <div class="app-wrapper">
+      <div class="view-container">
+        <!-- Side Panel (expandable) -->
+        <div id="side-panel" class="side-panel">
+          <div class="side-panel-header">
+            <div class="side-panel-tab-info">
+              <img class="side-panel-icon" src="" alt="" />
+              <span class="side-panel-title">Settings</span>
+            </div>
+            <div class="side-panel-actions">
+              <button
+                class="btn-pin"
+                title="Pin Panel"
+                data-i18n-title="tipPinPanel"
+              >
+                📌
+              </button>
+              <button
+                class="btn-close-panel"
+                title="Close"
+                data-i18n-title="tipClose"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <div class="side-panel-content">
+            <!-- 🔊 Audio -->
+            <div class="sp-section">
+              <div class="sp-section-title" data-i18n="spAudio">🔊 Audio</div>
+              <div class="sp-chips-row">
+                <label class="sp-chip"
+                  ><input type="checkbox" class="sp-sw-comp" /><span
+                    data-i18n="comp"
+                    >Compressor</span
+                  ></label
+                >
+                <label class="sp-chip"
+                  ><input type="checkbox" class="sp-sw-bass" /><span
+                    data-i18n="bass"
+                    >Bass</span
+                  ></label
+                >
+                <label class="sp-chip"
+                  ><input type="checkbox" class="sp-sw-mono" /><span
+                    data-i18n="mono"
+                    >Mono</span
+                  ></label
+                >
+              </div>
+              <div class="sp-slider-row">
+                <span class="sp-label" data-i18n="spPan">Pan</span>
+                <span class="sp-label-side">L</span>
+                <input
+                  type="range"
+                  class="sp-slider sp-pan"
+                  min="-1"
+                  max="1"
+                  step="0.1"
+                  value="0"
+                />
+                <span class="sp-label-side">R</span>
+              </div>
+              <div class="sp-slider-row">
+                <span class="sp-label" data-i18n="spDelay">Delay</span>
+                <input
+                  type="range"
+                  class="sp-slider sp-delay"
+                  min="-500"
+                  max="500"
+                  step="10"
+                  value="0"
+                />
+                <span class="sp-value sp-delay-val">0ms</span>
+              </div>
+            </div>
+
+            <!-- ⤵ Speed -->
+            <div class="sp-section">
+              <div class="sp-section-title" data-i18n="spSpeed">⚡ Speed</div>
+              <div class="sp-speed-row">
+                <span class="sp-label-side">0.25x</span>
+                <input
+                  type="range"
+                  class="sp-slider sp-speed-slider"
+                  min="0.25"
+                  max="16"
+                  step="0.05"
+                  value="1"
+                />
+                <span class="sp-label-side">16x</span>
+              </div>
+              <div class="sp-speed-input-row">
+                <span class="sp-label" data-i18n="spValue">Value:</span>
+                <input type="text" class="sp-speed-input" value="1.0" />
+                <span>x</span>
+              </div>
+            </div>
+
+            <!-- 🎚️ EQ -->
+            <div class="sp-section sp-eq-section">
+              <div class="sp-section-title" data-i18n="eqTitle">
+                🎚️ 10-Band EQ
+              </div>
+              <div class="sp-eq-full">
+                <canvas
+                  class="sp-eq-curve-canvas"
+                  width="180"
+                  height="80"
+                ></canvas>
+                <div class="sp-eq-sliders-row">
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="0"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">32</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="1"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">64</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="2"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">125</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="3"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">250</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="4"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">500</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="5"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">1k</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="6"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">2k</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="7"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">4k</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="8"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">8k</span>
+                  </div>
+                  <div class="sp-eq-col-full">
+                    <span class="sp-eq-val">0</span>
+                    <div class="sp-eq-track"></div>
+                    <div class="sp-eq-zero"></div>
+                    <input
+                      type="range"
+                      class="sp-eq-input"
+                      data-i="9"
+                      min="-12"
+                      max="12"
+                      step="0.1"
+                      value="0"
+                    />
+                    <span class="sp-eq-hz">16k</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 🎬 Video -->
+            <div class="sp-section">
+              <div class="sp-section-title" data-i18n="spVideo">🎬 Video</div>
+              <!-- Video Transform Buttons -->
+              <div class="sp-btn-grid">
+                <button
+                  class="sp-btn"
+                  data-action="rotate"
+                  title="Rotate"
+                  data-i18n-title="spRotate"
+                >
+                  ↻
+                </button>
+                <button
+                  class="sp-btn"
+                  data-action="mirror"
+                  title="Mirror"
+                  data-i18n-title="spMirror"
+                >
+                  ↔
+                </button>
+                <button
+                  class="sp-btn"
+                  data-action="crop"
+                  title="Crop"
+                  data-i18n-title="spCrop"
+                >
+                  ⬜
+                </button>
+                <button
+                  class="sp-btn"
+                  data-action="fullscreen"
+                  title="Fullscreen"
+                  data-i18n-title="spFullscreen"
+                >
+                  ⛶
+                </button>
+                <button
+                  class="sp-btn"
+                  data-action="screenshot"
+                  title="Screenshot"
+                  data-i18n-title="spScreenshot"
+                >
+                  📷
+                </button>
+                <button
+                  class="sp-btn"
+                  data-action="dim"
+                  title="Dim Background"
+                  data-i18n-title="spDim"
+                >
+                  🌙
+                </button>
+              </div>
+
+              <!-- Time Seek -->
+              <div class="sp-seek-row">
+                <span class="sp-label" data-i18n="spSeek">Seek</span>
+                <div class="sp-seek-btns">
+                  <button
+                    class="sp-btn-small"
+                    data-action="seek"
+                    data-delta="-10"
+                    title="-10s"
+                  >
+                    -10
+                  </button>
+                  <button
+                    class="sp-btn-small"
+                    data-action="seek"
+                    data-delta="-5"
+                    title="-5s"
+                  >
+                    -5
+                  </button>
+                  <button
+                    class="sp-btn-small"
+                    data-action="seek"
+                    data-delta="-1"
+                    title="-1s"
+                  >
+                    -1
+                  </button>
+                  <button
+                    class="sp-btn-small"
+                    data-action="seek"
+                    data-delta="1"
+                    title="+1s"
+                  >
+                    +1
+                  </button>
+                  <button
+                    class="sp-btn-small"
+                    data-action="seek"
+                    data-delta="5"
+                    title="+5s"
+                  >
+                    +5
+                  </button>
+                  <button
+                    class="sp-btn-small"
+                    data-action="seek"
+                    data-delta="10"
+                    title="+10s"
+                  >
+                    +10
+                  </button>
+                </div>
+              </div>
+
+              <!-- Filter Sliders -->
+              <div class="sp-slider-row">
+                <span class="sp-label" data-i18n="spBrightness"
+                  >Brightness</span
+                >
+                <input
+                  type="range"
+                  class="sp-slider sp-brightness"
+                  min="50"
+                  max="150"
+                  step="1"
+                  value="100"
+                />
+                <span class="sp-value sp-brightness-val">100%</span>
+              </div>
+              <div class="sp-slider-row">
+                <span class="sp-label" data-i18n="spContrast">Contrast</span>
+                <input
+                  type="range"
+                  class="sp-slider sp-contrast"
+                  min="50"
+                  max="150"
+                  step="1"
+                  value="100"
+                />
+                <span class="sp-value sp-contrast-val">100%</span>
+              </div>
+              <div class="sp-slider-row">
+                <span class="sp-label" data-i18n="spSaturate">Saturate</span>
+                <input
+                  type="range"
+                  class="sp-slider sp-saturate"
+                  min="0"
+                  max="200"
+                  step="1"
+                  value="100"
+                />
+                <span class="sp-value sp-saturate-val">100%</span>
+              </div>
+
+              <!-- Filter Toggles -->
+              <div class="sp-chips-row sp-filter-chips">
+                <label class="sp-chip"
+                  ><input type="checkbox" class="sp-sw-grayscale" /><span
+                    data-i18n="spGrayscale"
+                    >Grayscale</span
+                  ></label
+                >
+                <label class="sp-chip"
+                  ><input type="checkbox" class="sp-sw-invert" /><span
+                    data-i18n="spInvert"
+                    >Invert</span
+                  ></label
+                >
+              </div>
+
+              <!-- AB Loop -->
+              <div class="sp-markers-row">
+                <button class="sp-btn sp-btn-marker" data-action="mark-a">
+                  A
+                </button>
+                <button class="sp-btn sp-btn-marker" data-action="mark-b">
+                  B
+                </button>
+                <button class="sp-btn sp-btn-loop" data-action="ab-loop">
+                  🔁
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="side-panel-footer">
+            <button class="sp-btn-action sp-btn-reset" data-i18n="spResetFx">
+              ↺ Reset Effects
+            </button>
+            <button class="sp-btn-action sp-btn-save" data-i18n="spSaveFx">
+              💾 Save Effects
+            </button>
+          </div>
+        </div>
+
+        <div id="view-main" class="view active">
+          <div class="nav-island">
+            <div class="brand">SPECTRA <span class="ver">2026</span></div>
+            <div class="nav-right">
+              <button
+                id="btn-theme"
+                class="btn-icon"
+                title="Toggle Theme"
+                data-i18n-title="btnThemeTooltip"
+              >
+                🖥️
+              </button>
+              <button
+                id="btn-settings"
+                class="btn-icon"
+                title="Settings"
+                data-i18n-title="btnSettingsTooltip"
+              >
+                ⚙️
+              </button>
+              <button
+                id="btn-hotkeys"
+                class="btn-icon"
+                title="Page Hotkeys (Custom)"
+                data-i18n-title="btnHotkeysTooltip"
+              >
+                ⌨️
+              </button>
+              <button
+                id="btn-shortcuts"
+                class="btn-icon"
+                title="Global Shortcuts (Chrome)"
+                data-i18n-title="btnShortcutsTooltip"
+              >
+                🌐
+              </button>
+              <button
+                id="btn-remote"
+                class="btn-icon"
+                title="Remote Control"
+                data-i18n-title="btnRemoteTooltip"
+              >
+                📱
+              </button>
+            </div>
+          </div>
+
+          <div id="main-stage"></div>
+
+          <div id="empty-state" class="empty-container">
+            <div class="empty-blob"></div>
+            <div class="empty-text" data-i18n="noAudio">No Audio Signal</div>
+          </div>
+
+          <div class="stack-header hidden" id="bg-header">
+            <span data-i18n="bgTitle">Background</span>
+            <span id="bg-badge" class="badge">0</span>
+          </div>
+          <div id="bg-stack" class="bg-stack"></div>
+        </div>
+
+        <div id="view-settings" class="view">
+          <div class="nav-island">
+            <button id="btn-back" class="btn-icon">←</button>
+            <div class="brand" data-i18n="settingsTitle">Settings</div>
+            <div class="nav-placeholder" style="width: 32px"></div>
+          </div>
+
+          <!-- Group 1: Interface -->
+          <div class="setting-group-title" data-i18n="grpInterface">
+            Interface
+          </div>
+          <div class="setting-card">
+            <div class="setting-item">
+              <div class="setting-label">
+                <div data-i18n="osdLabel">OSD Popup</div>
+                <div class="setting-sub" data-i18n="osdSub">
+                  Overlay when using shortcuts
+                </div>
+              </div>
+              <label class="switch-main">
+                <input type="checkbox" id="set-osd" />
+                <span class="slider-round"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-label">
+                <div data-i18n="vizLabel">Visualizer</div>
+                <div class="setting-sub" data-i18n="vizSub">
+                  Show dynamic audio bars
+                </div>
+              </div>
+              <label class="switch-main">
+                <input type="checkbox" id="set-viz" />
+                <span class="slider-round"></span>
+              </label>
+            </div>
+
+            <!-- Explanation moved inside the card but slightly styled -->
+            <div style="padding: 0 16px 16px 16px">
+              <div class="setting-desc" data-i18n="vizDesc">
+                Disabling this allows "Native Lite" mode for restricted sites,
+                saving resources until >100% volume.
+              </div>
+            </div>
+          </div>
+
+          <!-- Group 2: General -->
+          <div class="setting-group-title" data-i18n="grpGeneral">General</div>
+          <div class="setting-card">
+            <div class="setting-item">
+              <div class="setting-label" data-i18n="langLabel">Language</div>
+              <select id="set-lang" class="setting-select">
+                <option value="en-US">English</option>
+                <option value="zh-CN">简体中文</option>
+                <option value="ja-JP">日本語</option>
+                <option value="ko-KR">한국어</option>
+                <option value="es-ES">Español</option>
+                <option value="fr-FR">Français</option>
+                <option value="de-DE">Deutsch</option>
+                <option value="ru-RU">Русский</option>
+              </select>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-label">
+                <div data-i18n="themeLabel">Theme</div>
+                <div class="setting-sub" data-i18n="themeSub">
+                  Choose your preferred color scheme
+                </div>
+              </div>
+              <select id="set-theme" class="setting-select">
+                <option value="light" data-i18n="themeLight">Light</option>
+                <option value="dark" data-i18n="themeDark">Dark</option>
+                <option value="system" data-i18n="themeSystem">System</option>
+              </select>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-label">
+                <div data-i18n="pauseRetentionLabel">Pause Retention</div>
+                <div class="setting-sub" data-i18n="pauseRetentionSub">
+                  Keep paused tabs in UI (0=forever)
+                </div>
+              </div>
+              <div class="setting-input-row">
+                <input
+                  type="number"
+                  id="set-pause-retention"
+                  class="setting-number-input"
+                  min="0"
+                  max="3600"
+                  step="10"
+                  value="60"
+                />
+                <span class="setting-unit" data-i18n="pauseRetentionUnit"
+                  >seconds</span
+                >
+              </div>
+            </div>
+          </div>
+
+          <!-- Group 3: Advanced (Registry) -->
+          <div id="registry-group">
+            <div class="setting-group-title" data-i18n="grpAdvanced">
+              Advanced
+            </div>
+            <div class="setting-card" style="padding: 16px">
+              <!-- Tab Switcher -->
+              <div class="registry-tabs">
+                <button
+                  id="tab-restricted"
+                  class="registry-tab active"
+                  data-i18n="tabRestricted"
+                >
+                  🔒 Need Capture
+                </button>
+                <button id="tab-safe" class="registry-tab" data-i18n="tabSafe">
+                  ✅ Safe Sites
+                </button>
+              </div>
+
+              <!-- Search Box -->
+              <div class="registry-search">
+                <input
+                  type="text"
+                  id="registry-filter"
+                  class="registry-filter-input"
+                  placeholder="🔍 Filter..."
+                  data-i18n-placeholder="filterPlaceholder"
+                />
+              </div>
+
+              <!-- Domain List -->
+              <div id="registry-list" class="registry-list"></div>
+
+              <!-- Add New Domain -->
+              <div class="registry-add">
+                <input
+                  type="text"
+                  id="registry-new-domain"
+                  class="registry-add-input"
+                  placeholder="example.com"
+                />
+                <button id="btn-add-domain" class="btn-small">+</button>
+              </div>
+
+              <!-- Hint Text -->
+              <div class="setting-sub registry-hint" data-i18n="registryHint">
+                Sites are auto-detected. Manually add if needed.
+              </div>
+            </div>
+          </div>
+
+          <!-- Group 4: URL Rule Presets -->
+          <div id="presets-group">
+            <div class="setting-group-title" data-i18n="grpPresets">
+              Saved Presets
+            </div>
+            <div class="setting-card" style="padding: 16px">
+              <!-- Presets List -->
+              <div id="presets-list" class="presets-list"></div>
+
+              <!-- Empty State Hint -->
+              <div id="presets-empty" class="setting-sub presets-hint" data-i18n="presetsHint">
+                No saved presets. Use 💾 button on cards to save.
+              </div>
+
+              <!-- Clear Button -->
+              <div class="presets-actions">
+                <button id="btn-clear-presets" class="btn-small-danger" data-i18n="btnClearPresets">
+                  Clear All
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="version-info">Ver 24.0 • Ultra Build</div>
+        </div>
+      </div>
+    </div>
+
+    <template id="tmpl-card">
+      <div class="glass-card">
+        <div class="card-top">
+          <div class="meta-group">
+            <img class="meta-icon" src="" />
+            <div class="meta-text">
+              <div class="meta-title" title=""></div>
+              <div class="meta-domain"></div>
+            </div>
+          </div>
+          <div class="top-right">
+            <div class="save-actions">
+              <button
+                class="btn-text btn-reset"
+                title="Reset"
+                data-i18n-title="resetTooltip"
+              >
+                ↺
+              </button>
+              <button
+                class="btn-text btn-save"
+                title="Save"
+                data-i18n-title="saveTooltip"
+              >
+                💾
+              </button>
+            </div>
+            <label class="switch-main"
+              ><input type="checkbox" class="sw-enable" /><span
+                class="slider-round"
+              ></span
+            ></label>
+          </div>
+        </div>
+
+        <div class="sleep-mask hidden">
+          <div class="sleep-content">
+            <div class="sleep-icon">⏻</div>
+            <div class="sleep-text"></div>
+          </div>
+        </div>
+
+        <div class="viz-island">
+          <canvas class="viz-canvas" width="360" height="40"></canvas>
+          <div class="viz-baseline"></div>
+        </div>
+
+        <div class="control-stack">
+          <div class="slider-row">
+            <button class="btn-mute">🔊</button>
+            <div class="slider-rail-container">
+              <input
+                type="range"
+                class="vol-slider"
+                min="0"
+                max="800"
+                step="10"
+                value="100"
+              />
+              <div class="slider-fill"></div>
+              <div class="slider-bg"></div>
+            </div>
+            <div class="vol-number">100%</div>
+          </div>
+
+          <!-- Speed Control + Media Buttons -->
+          <div class="media-control-row">
+            <div class="speed-control">
+              <button class="btn-speed" data-delta="-0.5" title="-0.5x">
+                «
+              </button>
+              <button class="btn-speed" data-delta="-0.1" title="-0.1x">
+                ‹
+              </button>
+              <input type="text" class="speed-input" value="1.0" />
+              <button class="btn-speed" data-delta="0.1" title="+0.1x">
+                ›
+              </button>
+              <button class="btn-speed" data-delta="0.5" title="+0.5x">
+                »
+              </button>
+            </div>
+            <div class="media-buttons">
+              <!-- Pause/Play -->
+              <button
+                class="btn-media btn-pause"
+                title="Pause/Play"
+                data-i18n-title="btnPause"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="4" height="12" />
+                  <rect x="14" y="6" width="4" height="12" />
+                </svg>
+              </button>
+              <!-- Picture-in-Picture -->
+              <button
+                class="btn-media btn-pip"
+                title="Picture-in-Picture"
+                data-i18n-title="btnPip"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="2" y="5" width="20" height="14" rx="2" />
+                  <rect
+                    x="11"
+                    y="11"
+                    width="9"
+                    height="6"
+                    rx="1"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+              <!-- Hotkey Target -->
+              <button
+                class="btn-media btn-hotkey-target"
+                title="Hotkey Target"
+                data-i18n-title="btnHotkeyTarget"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="2" y="4" width="20" height="14" rx="2" />
+                  <path d="M12 22v-4m-3 3l3-3 3 3" />
+                </svg>
+              </button>
+              <!-- Go to Tab (background cards only) -->
+              <button
+                class="btn-media btn-goto-tab hidden"
+                title="Go to Tab"
+                data-i18n-title="btnGotoTab"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M9 12l-4 4 4 4m-4-4h11a4 4 0 000-8h-1" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
