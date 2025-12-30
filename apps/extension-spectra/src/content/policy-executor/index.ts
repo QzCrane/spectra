@@ -126,9 +126,32 @@ export async function createPolicyExecutor(deps: PolicyExecutorDeps, state: Poli
 
 	probeCorsOnMediaDetected(deps.messenger, internalState, applyState);
 
+<<<<<<< HEAD
 	// rule: CORS detection requires user gesture per Chrome Autoplay policy
 	// note: detection happens once when user interacts (via user-interaction.ts -> applyState -> executeMode)
 	// The audioController.initialize() is called in mode-executor.ts when hasUserGesture() is true
+=======
+	// rule: auto-trigger CORS probe on page load with exponential-ish backoff
+	// note: discovery of media elements triggers immediate AudioContext attachment for real-time CORS testing
+	if (internalState.corsStatus === 'PENDING') {
+		const tryStartCorsDetection = (attempt: number, maxAttempts: number) => {
+			const mediaCount = document.querySelectorAll('video, audio').length;
+
+			if (mediaCount > 0) {
+				log.info(`[CORS] Found ${mediaCount} media elements, starting detection...`);
+				audioController.initialize().then(() => {
+					audioController.scanAndAttach();
+				});
+			} else if (attempt < maxAttempts) {
+				setTimeout(() => tryStartCorsDetection(attempt + 1, maxAttempts), 1000);
+			} else {
+				log.info('[CORS] No media elements found, waiting for DOM changes');
+			}
+		};
+
+		setTimeout(() => tryStartCorsDetection(1, 5), 500);
+	}
+>>>>>>> origin/main
 
 	return {
 		applyState,
