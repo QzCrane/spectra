@@ -1,0 +1,36 @@
+{
+	"name": "@nexus/kernel",
+	"version": "0.0.1",
+	"private": true,
+	"description": "NEXUS Core Kernel - Typed RPC Bus & Storage Repository",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		},
+		"./messages": {
+			"import": "./dist/messages/index.js",
+			"types": "./dist/messages/index.d.ts"
+		},
+		"./storage": {
+			"import": "./dist/storage/index.js",
+			"types": "./dist/storage/index.d.ts"
+		},
+		"./*": null
+	},
+	"scripts": {
+		"build": "tsc -b",
+		"dev": "tsc -b --watch",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@nexus/contracts": "workspace:*"
+	},
+	"devDependencies": {
+		"typescript": "^5.3.0",
+		"chrome-types": "^0.1.327"
+	}
+}

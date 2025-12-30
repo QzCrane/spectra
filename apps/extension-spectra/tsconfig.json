@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "types": ["chrome-types"],
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "noEmit": true
+  },
+  "include": ["src/**/*", "../../packages/nexus-kernel/src/**/*", "../../packages/features/audio-engine/src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

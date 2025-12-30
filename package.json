@@ -1,0 +1,23 @@
+{
+	"name": "nexus",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"description": "Project NEXUS - Chrome Extension Ecosystem (SPECTRA,  HALO)",
+	"scripts": {
+		"dev": "turbo run dev",
+		"build": "turbo run build",
+		"lint": "turbo run lint",
+		"typecheck": "turbo run typecheck"
+	},
+	"devDependencies": {
+		"chrome-types": "^0.1.327",
+		"sharp": "^0.34.5",
+		"turbo": "^2.0.0",
+		"typescript": "^5.3.0"
+	},
+	"packageManager": "pnpm@9.0.0",
+	"engines": {
+		"node": ">=18"
+	}
+}

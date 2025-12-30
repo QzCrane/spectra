@@ -1,0 +1,29 @@
+{
+	"name": "@nexus/audio-engine",
+	"version": "0.0.1",
+	"private": true,
+	"description": "SPECTRA Audio Engine - WebAudio Controller & Policy Engine",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		},
+		"./*": null
+	},
+	"scripts": {
+		"build": "tsc",
+		"dev": "tsc --watch",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@nexus/contracts": "workspace:*",
+		"@nexus/kernel": "workspace:*"
+	},
+	"devDependencies": {
+		"typescript": "^5.3.0",
+		"chrome-types": "^0.1.327"
+	}
+}

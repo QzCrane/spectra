@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SPECTRA Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Header -->
+      <header class="header">
+        <div class="logo">
+          <img src="icons/icon48.png" alt="SPECTRA" />
+          <h1>SPECTRA</h1>
+        </div>
+        <div class="header-actions">
+          <select id="lang-select" class="lang-select">
+            <option value="en-US">English</option>
+            <option value="zh-CN">简体中文</option>
+            <option value="ja-JP">日本語</option>
+            <option value="ko-KR">한국어</option>
+            <option value="es-ES">Español</option>
+            <option value="fr-FR">Français</option>
+            <option value="de-DE">Deutsch</option>
+            <option value="ru-RU">Русский</option>
+          </select>
+          <button id="theme-toggle" class="btn-icon" title="Toggle Theme">🌙</button>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <main class="main">
+        <!-- Chrome Global Shortcuts -->
+        <section class="section">
+          <div class="section-header">
+            <h2 data-i18n="opt_chrome_title">🌐 Chrome Global Shortcuts</h2>
+            <a href="chrome://extensions/shortcuts" id="chrome-shortcuts-link" class="link-btn">
+              <span data-i18n="opt_chrome_open">Open Chrome Settings</span> →
+            </a>
+          </div>
+          <p class="section-desc" data-i18n="opt_chrome_desc">
+            These shortcuts work system-wide, even when Chrome is in background.
+          </p>
+          <div id="slots-list" class="slots-list">
+            <!-- JS dynamic render -->
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-header">
+            <h2 data-i18n="opt_site_title">📑 Per-Site Hotkeys</h2>
+          </div>
+          <p class="section-desc" data-i18n="opt_site_desc">
+            Custom hotkeys for specific websites. Disabled by default.
+          </p>
+          
+          <!-- Add new site -->
+          <div class="site-add-row">
+            <input type="text" id="site-input" class="site-input" data-i18n-placeholder="opt_site_placeholder" placeholder="Enter domain (e.g. youtube.com)" />
+            <button id="site-add-btn" class="btn btn-small" data-i18n="opt_site_add_btn">Add</button>
+          </div>
+          
+          <!-- Existing sites selector -->
+          <div class="site-selector">
+            <label data-i18n="opt_site_select_label">Select site:</label>
+            <select id="site-select" class="site-select">
+              <option value="" data-i18n="opt_site_select_default">-- Select a site --</option>
+            </select>
+          </div>
+
+          <!-- Site config panel (shown when site selected) -->
+          <div id="site-config" class="site-config hidden">
+            <div class="site-config-header">
+              <span id="site-domain" class="site-domain"></span>
+              <label class="toggle-label">
+                <input type="checkbox" id="site-enabled" />
+                <span data-i18n="opt_site_enable">Enable on this site</span>
+              </label>
+              <button id="site-delete" class="btn btn-danger btn-small" data-i18n="opt_site_delete">Delete</button>
+            </div>
+
+            <div id="site-bindings-list" class="bindings-list">
+              <!-- JS dynamic render -->
+            </div>
+
+            <button id="site-add-binding" class="btn btn-secondary" data-i18n="opt_site_add_key">
+              + Add Hotkey
+            </button>
+          </div>
+
+          <!-- Empty state -->
+          <div id="site-empty" class="empty-state">
+            <p data-i18n="opt_site_empty">
+              No site-specific hotkeys configured. Select a site to customize.
+            </p>
+          </div>
+        </section>
+
+        <!-- User Scripts Notice -->
+        <section id="userscripts-section" class="section">
+          <div class="section-header">
+            <h2 data-i18n="opt_userscripts_title">⚙️ Custom Scripts</h2>
+            <span id="userscripts-status" class="status-badge" data-i18n="opt_userscripts_status_disabled">❌ Not enabled</span>
+          </div>
+          <p class="section-desc" data-i18n="opt_userscripts_desc">
+            To use "Run JS" hotkey action, you need to enable User Scripts.
+          </p>
+          <button id="userscripts-enable-btn" class="btn btn-secondary" data-i18n="opt_userscripts_enable">
+            Enable in Chrome Settings
+          </button>
+        </section>
+      </main>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 data-i18n="modal_edit_title">Edit Hotkey</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- Key input -->
+          <div class="form-group">
+            <label data-i18n="modal_key">Key Combination</label>
+            <input
+              type="text"
+              id="edit-key"
+              class="key-input"
+              readonly
+              placeholder="Click and press keys..."
+            />
+          </div>
+
+          <!-- Action select -->
+          <div class="form-group">
+            <label data-i18n="modal_action">Action</label>
+            <select id="edit-action" class="action-select"></select>
+          </div>
+
+          <!-- Parameters -->
+          <div id="params-container" class="form-group hidden">
+            <label id="params-label">Value</label>
+            <input type="text" id="edit-params" class="params-input" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="modal-cancel" class="btn btn-secondary" data-i18n="modal_cancel">Cancel</button>
+          <button id="modal-save" class="btn btn-primary" data-i18n="modal_save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

@@ -1,0 +1,93 @@
+// goal: binds secondary media control UI elements to content script commands for playback and focus management
+
+import type { CardUIElements } from '../types';
+import { sendToTab } from '../utils/dom';
+import { syncSidePanelSpeed } from '../side-panel/controls';
+
+const PAUSE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+const PLAY_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+
+// eff: attaches click and input handlers to playback buttons, speed controls, and tab-focus utilities
+export function bindMediaControls(ui: CardUIElements, tabId: number): void {
+	if (ui.btnPause) {
+		ui.btnPause.onclick = async () => {
+			const res = await sendToTab<{ playing: boolean }>(tabId, 'MEDIA_TOGGLE_PLAY', {});
+			if (res && ui.btnPause) {
+				ui.btnPause.innerHTML = res.playing ? PAUSE_SVG : PLAY_SVG;
+			}
+		};
+	}
+
+	if (ui.btnPip) {
+		ui.btnPip.onclick = async () => {
+			const res = await sendToTab<{ active: boolean }>(tabId, 'MEDIA_TOGGLE_PIP', {});
+			if (res && ui.btnPip) {
+				ui.btnPip.classList.toggle('active', res.active);
+			}
+		};
+	}
+
+	ui.speedBtns.forEach(btn => {
+		btn.onclick = async () => {
+			const delta = parseFloat(btn.dataset.delta || '0');
+			const stateRes = await sendToTab<{ speed: number }>(tabId, 'MEDIA_GET_STATE', {});
+			const currentSpeed = stateRes?.speed ?? 1;
+			const newSpeed = Math.max(0.1, Math.min(16, currentSpeed + delta));
+			const res = await sendToTab<{ speed: number }>(tabId, 'MEDIA_SET_SPEED', { speed: newSpeed });
+			if (res && ui.speedInput) {
+				ui.speedInput.value = res.speed.toFixed(2);
+			}
+		};
+	});
+
+	if (ui.speedInput) {
+		const updateSpeed = async (speed: number) => {
+			const clampedSpeed = Math.max(0.1, Math.min(16, speed));
+			const res = await sendToTab<{ speed: number }>(tabId, 'MEDIA_SET_SPEED', { speed: clampedSpeed });
+			if (res) {
+				const finalSpeed = res.speed;
+				if (ui.speedInput) ui.speedInput.value = finalSpeed.toFixed(2);
+				// note: ensure the global side panel speed control stays in sync with individual card adjustments
+				syncSidePanelSpeed(finalSpeed);
+			}
+		};
+
+		ui.speedInput.onchange = (e) => {
+			const speed = parseFloat((e.target as HTMLInputElement).value) || 1;
+			updateSpeed(speed);
+		};
+
+		ui.speedInput.onwheel = (e) => {
+			e.preventDefault();
+			const current = parseFloat(ui.speedInput!.value) || 1;
+			const delta = e.deltaY < 0 ? 0.1 : -0.1;
+			updateSpeed(current + delta);
+		};
+	}
+
+	if (ui.btnHotkeyTarget) {
+		const btn = ui.btnHotkeyTarget;
+
+		// note: highlight the button if this specific tab is currently designated as the global hotkey command target
+		chrome.storage.local.get(['hotkeyTargetTabId'], (result) => {
+			if (result.hotkeyTargetTabId === tabId) {
+				btn.classList.add('active');
+			}
+		});
+
+		btn.onclick = () => {
+			chrome.storage.local.set({ hotkeyTargetTabId: tabId }, () => {
+				// note: enforce exclusive "active" state across all rendered cards in the popup
+				document.querySelectorAll('.btn-hotkey-target').forEach(b => b.classList.remove('active'));
+				btn.classList.add('active');
+			});
+		};
+	}
+
+	if (ui.btnGotoTab) {
+		ui.btnGotoTab.onclick = () => {
+			chrome.tabs.update(tabId, { active: true });
+		};
+	}
+}
+
