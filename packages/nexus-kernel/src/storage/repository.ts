@@ -10,6 +10,7 @@ import * as audioConfig from './audio-config.js';
 import * as globalSettings from './global-settings.js';
 import * as userRegistry from './user-registry.js';
 import * as restrictedRegistry from './restricted-registry.js';
+import * as tabSessionModule from './tab-session.js';
 
 export class StorageRepository {
   // Audio config operations
@@ -38,6 +39,14 @@ export class StorageRepository {
     markProbed: restrictedRegistry.markProbed,
     getDomainList: restrictedRegistry.getDomainList,
     set: restrictedRegistry.setRegistry,
+  };
+
+  // Tab session config (persists across refresh, isolated per tab)
+  tabSession = {
+    get: tabSessionModule.getTabSessionConfig,
+    set: tabSessionModule.setTabSessionConfig,
+    remove: tabSessionModule.removeTabSessionConfig,
+    has: tabSessionModule.hasTabSessionConfig,
   };
 
   // eff: subscribes to 'local' storage area changes

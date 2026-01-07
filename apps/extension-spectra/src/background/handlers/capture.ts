@@ -1,9 +1,33 @@
 // goal: manages tab capture session lifecycle, including stream ID acquisition and offscreen routing
 
 import { router, captureStates, captureLocks } from '../state';
-import { ensureOffscreen } from '../helpers';
+import { ensureOffscreen, closeOffscreen } from '../helpers';
 import { swLog } from '../../shared/logger';
 import { Actions, OffscreenActions } from '@nexus/contracts';
+
+// inv: 45s idle timeout to close offscreen document when no captures are active
+const IDLE_TIMEOUT = 45000;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+// eff: checks for active capture sessions and schedules/cancels offscreen cleanup
+function checkOffscreenIdle(): void {
+	const activeCount = Array.from(captureStates.values()).filter(v => v).length;
+	if (activeCount === 0) {
+		if (!idleTimer) {
+			swLog.debug(`No active captures, scheduling offscreen cleanup in ${IDLE_TIMEOUT}ms`);
+			idleTimer = setTimeout(() => {
+				closeOffscreen().catch(() => { });
+				idleTimer = null;
+			}, IDLE_TIMEOUT);
+		}
+	} else {
+		if (idleTimer) {
+			swLog.debug('Active capture detected, cancelling cleanup');
+			clearTimeout(idleTimer);
+			idleTimer = null;
+		}
+	}
+}
 
 // eff: registers listeners for CAPTURE_TOGGLE, CAPTURE_GET_STATE, and CAPTURE_UPDATE_CONFIG actions
 export function registerCaptureHandlers(): void {
@@ -40,6 +64,7 @@ export function registerCaptureHandlers(): void {
 				}
 
 				await ensureOffscreen();
+				checkOffscreenIdle(); // cancel any pending cleanup
 
 				// eff: request a MediaStream ID for the target tab to be consumed by the offscreen AudioContext
 				const streamId = await new Promise<string>((resolve, reject) => {
@@ -69,6 +94,8 @@ export function registerCaptureHandlers(): void {
 				chrome.tabs.sendMessage(tabId, { action: Actions.CAPTURE_STATE_CHANGE, payload: notifyPayload }).catch(() => { });
 				chrome.runtime.sendMessage({ action: Actions.CAPTURE_STATE_CHANGE, payload: notifyPayload }).catch(() => { });
 
+				checkOffscreenIdle(); // verify active count
+
 			} else {
 				swLog.capture(`Tab ${tabId}: Stopping capture...`);
 				if (captureStates.get(tabId)) {
@@ -79,6 +106,8 @@ export function registerCaptureHandlers(): void {
 				const notifyPayload = { tabId, enabled: false };
 				chrome.tabs.sendMessage(tabId, { action: Actions.CAPTURE_STATE_CHANGE, payload: notifyPayload }).catch(() => { });
 				chrome.runtime.sendMessage({ action: Actions.CAPTURE_STATE_CHANGE, payload: notifyPayload }).catch(() => { });
+
+				checkOffscreenIdle(); // schedule cleanup if last tab
 			}
 
 			return { status: 'processing' as const };
@@ -86,6 +115,7 @@ export function registerCaptureHandlers(): void {
 			const errorMsg = e instanceof Error ? e.message : JSON.stringify(e);
 			swLog.error(`Capture Toggle Failed (Tab ${tabId}): ${errorMsg}`);
 			captureStates.set(tabId, false);
+			checkOffscreenIdle();
 			return { status: 'error' as const, error: errorMsg };
 		} finally {
 			// note: release lock after a fixed delay to ensure state transitions complete
@@ -120,5 +150,7 @@ export function handleCaptureToggle(tabId: number, enabled: boolean): void {
 		captureStates.set(tabId, false);
 		const notifyPayload = { tabId, enabled: false };
 		chrome.tabs.sendMessage(tabId, { action: Actions.CAPTURE_STATE_CHANGE, payload: notifyPayload }).catch(() => { });
+
+		checkOffscreenIdle(); // schedule cleanup
 	}
 }

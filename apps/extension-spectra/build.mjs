@@ -87,7 +87,7 @@ async function buildEntry(entry, outputName, globalName) {
 await buildEntry('src/background/index.ts', 'background', 'SpectraBackground');
 
 // 3. Build content.js
-await buildEntry('src/content/index.ts', 'content', 'SpectraContent');
+await buildEntry('src/content/core/index.ts', 'content', 'SpectraContent');
 
 // 4. Build popup.js
 await buildEntry('src/popup/index.ts', 'popup', 'SpectraPopup');

@@ -1,30 +1,13 @@
 // goal: handles global chrome keyboard shortcuts (manifest commands and custom slots)
 // rule: standard commands are mapped directly; custom slots (slot_1-16) use user-defined mappings
 
-import type { AudioConfig, HotkeySettings, HotkeyAction } from '@nexus/contracts';
-import { Actions, DEFAULT_AUDIO_CONFIG, DEFAULT_HOTKEY_SETTINGS } from '@nexus/contracts';
-import { storage } from './state';
+import type { HotkeySettings, HotkeyAction } from '@nexus/contracts';
+import { Actions, DEFAULT_HOTKEY_SETTINGS } from '@nexus/contracts';
 import { swLog } from '../shared/logger';
 
-// configCache: memory cache for domain-specific audio settings to prevent race conditions during rapid key presses
-const configCache = new Map<string, AudioConfig>();
 // slotMapping: active mapping of manifest slot IDs to functional hotkey actions
 let slotMapping: Record<string, HotkeyAction> = { ...DEFAULT_HOTKEY_SETTINGS.slots };
 
-// eff: retrieves audio configuration with memory-first caching
-async function getConfigWithCache(domain: string): Promise<AudioConfig> {
-	const cached = configCache.get(domain);
-	if (cached) return cached;
-	const stored = await storage.getAudioConfig(domain);
-	configCache.set(domain, stored);
-	return stored;
-}
-
-// eff: updates both memory cache and persistent storage for a domain
-function setConfigWithCache(domain: string, config: AudioConfig): void {
-	configCache.set(domain, config);
-	storage.setAudioConfig(domain, config).catch(() => { });
-}
 
 // eff: synchronizes slotMapping from local storage
 async function loadSlotMapping(): Promise<void> {
@@ -84,46 +67,13 @@ function resolveDirectCommand(command: string): HotkeyAction | undefined {
 	return map[command];
 }
 
-// eff: resolves the hotkey action into either a background state update or a content script notification
-async function executeAction(action: HotkeyAction, tabId: number, domain: string): Promise<void> {
-	const oldConfig = await getConfigWithCache(domain);
-	let newConfig: Partial<AudioConfig> = {};
-
-	switch (action) {
-		case 'volume_up':
-			newConfig = { volume: Math.min(800, oldConfig.volume + 10) };
-			break;
-		case 'volume_down':
-			newConfig = { volume: Math.max(0, oldConfig.volume - 10) };
-			break;
-		case 'volume_mute':
-			newConfig = { muted: !oldConfig.muted };
-			break;
-		case 'speed_up':
-		case 'speed_down':
-		case 'speed_reset':
-		case 'play_pause':
-		case 'pip_toggle':
-		case 'fullscreen_toggle':
-			// rule: complex media/video operations are delegated to the content script handler
-			try {
-				await chrome.tabs.sendMessage(tabId, {
-					action: Actions.SHORTCUT_TRIGGER,
-					payload: { command: action }
-				});
-			} catch { }
-			return;
-		default:
-			return;
-	}
-
-	const mergedConfig = { ...oldConfig, ...newConfig };
-	setConfigWithCache(domain, mergedConfig);
-
+// eff: forwards the hotkey action to the content script for execution
+// rule: content script handles all state updates using its real-time config, ensuring UI sync
+async function executeAction(action: HotkeyAction, tabId: number, _domain: string): Promise<void> {
 	try {
 		await chrome.tabs.sendMessage(tabId, {
 			action: Actions.SHORTCUT_TRIGGER,
-			payload: { command: action, config: mergedConfig }
+			payload: { command: action }
 		});
 	} catch { }
 }

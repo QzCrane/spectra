@@ -59,8 +59,10 @@ export async function initCard(params: InitCardParams): Promise<boolean> {
     e.restricted !== false && domain.includes(e.domain)
   );
 
-  // note: priority is Saved Profile > Default Values; cleanConfig ensures the object adheres to the latest AudioConfig schema
-  const savedConfig = await getAudioConfig(domain);
+  // note: priority is Content Script runtime state > Saved Profile; cleanConfig ensures schema compliance
+  // rule: status.config reflects current session state (may differ from saved preset)
+  const runtimeConfig = status?.config;
+  const savedConfig = runtimeConfig ?? await getAudioConfig(domain);
   const config = cleanConfig(savedConfig);
 
   const settings = getGlobalSettings();

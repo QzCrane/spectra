@@ -1,6 +1,6 @@
 // goal: manages chrome tab lifecycle events to maintain accurate tab prioritization and state cleanup
 
-import { captureStates, badgeState, tabAudioStates, cleanupTabState } from './state';
+import { captureStates, badgeState, tabAudioStates, cleanupTabState, storage } from './state';
 import { handleCaptureToggle } from './handlers/capture';
 import { swLog } from '../shared/logger';
 
@@ -48,10 +48,12 @@ export function setupLifecycleListeners(): void {
 	chrome.tabs.onRemoved.addListener((tabId) => {
 		cleanupTabState(tabId);
 
+		// eff: clean up tab session config from storage
+		storage.tabSession.remove(tabId).catch(() => { });
+
 		if (captureStates.get(tabId)) {
 			// eff: force cleanup capture state if the tab is closed while active
 			handleCaptureToggle(tabId, false);
 		}
 	});
 }
-

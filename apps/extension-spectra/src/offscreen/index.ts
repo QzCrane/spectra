@@ -38,7 +38,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 			if (p?.analyser) {
 				const data = new Uint8Array(p.analyser.frequencyBinCount);
 				p.analyser.getByteFrequencyData(data);
-				sendResponse({ buffer: Array.from(data) });
+				sendResponse({ buffer: data });
 			} else {
 				sendResponse({ buffer: null });
 			}

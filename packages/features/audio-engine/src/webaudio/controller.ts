@@ -48,9 +48,57 @@ export class WebAudioController {
 
 	isReady(): boolean { return this.ctx !== null && this.ctx.state !== 'closed'; }
 
+	// eff: suspends AudioContext to prevent Chrome's fullscreen/WebAudio pipeline conflict
+	// note: MediaElementSourceNode cannot be detached; suspending ctx is the only reliable fix
+	async suspendContext(): Promise<void> {
+		if (this.ctx && this.ctx.state === 'running') {
+			try { await this.ctx.suspend(); } catch { /* ignore */ }
+		}
+	}
+
+	// eff: resumes AudioContext after fullscreen transition completes
+	async resumeContext(): Promise<void> {
+		if (this.ctx && this.ctx.state === 'suspended') {
+			try { await this.ctx.resume(); } catch { /* ignore */ }
+		}
+	}
+
+	// eff: completely destroys AudioContext to fix Chrome fullscreen bug
+	// note: this is the nuclear option - MediaElementSourceNode bindings persist even after suspend
+	// post: all attached media elements will be detached and ctx closed
+	async destroyContext(): Promise<void> {
+		if (!this.ctx) return;
+
+		// step 1: detach all currently attached elements
+		document.querySelectorAll('video, audio').forEach(el => {
+			const m = el as HTMLMediaElement & { _vm?: unknown; dataset: DOMStringMap };
+			if (m._vm) {
+				try {
+					// disconnect source from the chain to release the binding
+					(m._vm as { source: MediaElementAudioSourceNode }).source.disconnect();
+				} catch { /* ignore */ }
+				delete m._vm;
+				delete m.dataset.vmAttached;
+				delete m.dataset.vmProbed;
+			}
+			this.attachedNodes.delete(el as HTMLMediaElement);
+		});
+
+		// step 2: close the AudioContext completely
+		try {
+			await this.ctx.close();
+		} catch { /* ignore */ }
+
+		this.ctx = null;
+	}
+
 	setCallbacks(onDetected: CorsDetectedCallback, onSuccess: CorsSuccessCallback): void {
 		this.onCorsDetected = onDetected;
 		this.onCorsSuccess = onSuccess;
+	}
+
+	setSkipCorsCheck(skip: boolean): void {
+		this.skipCorsCheck = skip;
 	}
 
 	scanAndAttach(): number {
@@ -139,7 +187,7 @@ export class WebAudioController {
 			if (m._vm?.analyser) {
 				const data = new Uint8Array(m._vm.analyser.frequencyBinCount);
 				m._vm.analyser.getByteFrequencyData(data);
-				return Array.from(data);
+				return data as unknown as number[];
 			}
 		}
 		return null;

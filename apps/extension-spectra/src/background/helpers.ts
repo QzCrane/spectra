@@ -25,3 +25,13 @@ export async function ensureOffscreen(): Promise<void> {
 		swLog.debug('Offscreen document created');
 	}
 }
+
+// eff: terminates the offscreen document to free up resources
+export async function closeOffscreen(): Promise<void> {
+	const has = await chrome.offscreen.hasDocument();
+	if (has) {
+		swLog.debug('Closing offscreen document...');
+		await chrome.offscreen.closeDocument();
+		swLog.debug('Offscreen document closed');
+	}
+}

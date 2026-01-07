@@ -1,6 +1,6 @@
 {
 	"name": "@nexus/extension-spectra",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"private": true,
 	"description": "SPECTRA - The Audio & Video Enhancement Extension",
 	"type": "module",
@@ -9,8 +9,8 @@
 		"build": "node build.mjs --dev",
 		"build:prod": "node build.mjs",
 		"build:copy": "powershell -Command \"Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue; Copy-Item -Recurse public dist\"",
-		"test:e2e": "pnpm build && tsx test/smoke.spec.ts",
-		"test:volume": "pnpm build && tsx test/verify-volume.spec.ts",
+		"test:e2e": "pnpm build ; tsx test/smoke.spec.ts",
+		"test:volume": "pnpm build ; tsx test/verify-volume.spec.ts",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {

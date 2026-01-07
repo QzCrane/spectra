@@ -1,122 +1,183 @@
-// goal: implements a Mac-like inertial smooth scrolling engine using requestAnimationFrame and ease-out-quart
-// note: this helps eliminate UI stutter and provides a more premium interaction feel
+// goal: Popup/Options smooth scroll with boundary bubbling (based on Halo sidepanel-init)
+// inv: when child element reaches scroll boundary, scroll propagates to parent
 
-const CONFIG = {
-	sensitivity: 0.6,
-	duration: 600,
-	// group: easing function (ease-out-quart)
-	easing: (t: number) => 1 - Math.pow(1 - t, 4),
-};
+type EasingFn = (t: number) => number;
 
-interface ScrollState {
-	container: HTMLElement | null;
-	animationId: number | null;
-	targetY: number;
-	startY: number;
-	startTime: number;
+// ===== Scroll Engine (queue-based) =====
+interface ScrollCommand {
+	x: number;
+	y: number;
+	lastX: number;
+	lastY: number;
+	start: number;
 }
 
-const state: ScrollState = {
-	container: null,
-	animationId: null,
-	targetY: 0,
-	startY: 0,
-	startTime: 0,
+interface EngineState {
+	que: ScrollCommand[];
+	pending: number | null;
+	target: Element | null;
+	direction: { x: number; y: number };
+	animationTime: number;
+	easing: EasingFn;
+}
+
+const engine: EngineState = {
+	que: [],
+	pending: null,
+	target: null,
+	direction: { x: 0, y: 0 },
+	animationTime: 300, // shorter for responsive feel (was 400)
+	easing: (t) => 1 - Math.pow(1 - t, 4), // ease-out-quart
 };
 
-// eff: executes the frame-by-frame scroll position update until the target is reached or animation is cancelled
-function animateScroll(timestamp: number): void {
-	if (!state.container) return;
+function directionCheck(x: number, y: number): void {
+	const dirX = x > 0 ? 1 : -1;
+	const dirY = y > 0 ? 1 : -1;
+	if (engine.direction.x !== dirX || engine.direction.y !== dirY) {
+		engine.direction.x = dirX;
+		engine.direction.y = dirY;
+		engine.que = [];
+		if (engine.pending) {
+			cancelAnimationFrame(engine.pending);
+			engine.pending = null;
+		}
+	}
+}
 
-	if (!state.startTime) {
-		state.startTime = timestamp;
+function scrollStep(): void {
+	const target = engine.target;
+	if (!target) return;
+
+	const now = Date.now();
+	let scrollY = 0;
+
+	for (let i = 0; i < engine.que.length; i++) {
+		const item = engine.que[i];
+		if (!item) continue;
+
+		const elapsed = now - item.start;
+		const finished = elapsed >= engine.animationTime;
+
+		const rawPos = finished ? 1 : elapsed / engine.animationTime;
+		const pos = engine.easing(rawPos);
+
+		const y = ((item.y * pos - item.lastY) | 0);
+		scrollY += y;
+		item.lastY += y;
+
+		if (finished) {
+			engine.que.splice(i, 1);
+			i--;
+		}
 	}
 
-	const elapsed = timestamp - state.startTime;
-	const progress = Math.min(elapsed / CONFIG.duration, 1);
-	const easedProgress = CONFIG.easing(progress);
+	if (scrollY) {
+		(target as HTMLElement).scrollTop += scrollY;
+	}
 
-	const currentY = state.startY + (state.targetY - state.startY) * easedProgress;
-	state.container.scrollTop = currentY;
-
-	if (progress < 1) {
-		state.animationId = requestAnimationFrame(animateScroll);
+	if (engine.que.length) {
+		engine.pending = requestAnimationFrame(scrollStep);
 	} else {
-		state.animationId = null;
+		engine.pending = null;
 	}
 }
 
-// eff: calculates the final scroll destination and initiates the animation loop
-function scrollTo(container: HTMLElement, targetY: number): void {
-	if (state.animationId !== null) {
-		cancelAnimationFrame(state.animationId);
+function scrollTo(target: Element, deltaY: number): void {
+	directionCheck(0, deltaY);
+	engine.target = target;
+	engine.que.push({
+		x: 0,
+		y: deltaY,
+		lastX: 0,
+		lastY: deltaY < 0 ? 0.99 : -0.99,
+		start: Date.now(),
+	});
+	if (!engine.pending) {
+		engine.pending = requestAnimationFrame(scrollStep);
 	}
-
-	const maxScroll = container.scrollHeight - container.clientHeight;
-	const clampedTarget = Math.max(0, Math.min(targetY, maxScroll));
-
-	state.container = container;
-	state.startY = container.scrollTop;
-	state.targetY = clampedTarget;
-	state.startTime = 0;
-
-	state.animationId = requestAnimationFrame(animateScroll);
 }
 
-// eff: intercepts native wheel events to apply custom smooth scrolling logic
-function handleWheel(event: WheelEvent): void {
-	const container = findScrollableParent(event.target as HTMLElement);
-	if (!container) return;
-
-	// rule: prevent native scrolling to allow the smooth engine to take full control
-	event.preventDefault();
-
-	const delta = event.deltaY * CONFIG.sensitivity;
-
-	const currentTarget =
-		state.container === container && state.animationId !== null
-			? state.targetY
-			: container.scrollTop;
-
-	scrollTo(container, currentTarget + delta);
+// ===== Scroll Target with Boundary Bubbling =====
+function findScrollable(el: HTMLElement | null): HTMLElement {
+	while (el && el !== document.body) {
+		const s = getComputedStyle(el);
+		if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+			return el;
+		}
+		el = el.parentElement;
+	}
+	return document.documentElement;
 }
 
-// post: returns the nearest scrollable parent element or documentElement if none found
-function findScrollableParent(element: HTMLElement | null): HTMLElement | null {
-	while (element && element !== document.body) {
-		const style = getComputedStyle(element);
-		const overflowY = style.overflowY;
+// ===== Wheel Handler with Boundary Bubbling =====
+const CONFIG = {
+	stepSize: 150, // more responsive than 300
+	accelerationMax: 2.5,
+	accelerationDelta: 50,
+};
 
-		if (
-			(overflowY === 'auto' || overflowY === 'scroll') &&
-			element.scrollHeight > element.clientHeight
-		) {
-			return element;
+let lastTime = 0;
+let accel = 1;
+
+function handleWheel(e: WheelEvent): void {
+	let target = findScrollable(e.target as HTMLElement);
+	const isScrollingDown = e.deltaY > 0;
+	const isScrollingUp = e.deltaY < 0;
+
+	// Boundary bubbling: find a scrollable parent that isn't at boundary
+	while (target && target !== document.documentElement) {
+		const max = target.scrollHeight - target.clientHeight;
+		if (max <= 0) {
+			target = findScrollable(target.parentElement);
+			continue;
 		}
 
-		element = element.parentElement;
+		const atTop = target.scrollTop <= 0;
+		const atBottom = target.scrollTop >= max - 1;
+
+		if ((atTop && isScrollingUp) || (atBottom && isScrollingDown)) {
+			target = findScrollable(target.parentElement);
+			continue;
+		}
+
+		break;
 	}
 
-	const html = document.documentElement;
-	if (html.scrollHeight > html.clientHeight) {
-		return html;
+	// Final boundary check
+	const max = target.scrollHeight - target.clientHeight;
+	if (max <= 0) return;
+
+	const atTop = target.scrollTop <= 0;
+	const atBottom = target.scrollTop >= max - 1;
+	if ((atTop && isScrollingUp) || (atBottom && isScrollingDown)) {
+		return; // let browser handle
 	}
 
-	return null;
+	e.preventDefault();
+
+	// Acceleration
+	const now = Date.now();
+	if (now - lastTime < CONFIG.accelerationDelta) {
+		accel = Math.min(accel + 0.4, CONFIG.accelerationMax);
+	} else {
+		accel = 1;
+	}
+	lastTime = now;
+
+	const deltaY = (e.deltaY > 0 ? 1 : -1) * CONFIG.stepSize * accel;
+	scrollTo(target, deltaY);
 }
 
-// eff: attaches wheel listeners to the specified root to enable inertial scrolling
+// ===== Export =====
 export function enableSmoothScroll(root: Document | HTMLElement = document): void {
 	root.addEventListener('wheel', handleWheel as EventListener, { passive: false });
-	console.log('[SPECTRA] Smooth scroll enabled');
 }
 
-// eff: detaches listeners and halts any ongoing scroll animations
 export function disableSmoothScroll(root: Document | HTMLElement = document): void {
 	root.removeEventListener('wheel', handleWheel as EventListener);
-	if (state.animationId !== null) {
-		cancelAnimationFrame(state.animationId);
-		state.animationId = null;
+	if (engine.pending) {
+		cancelAnimationFrame(engine.pending);
+		engine.pending = null;
 	}
-	console.log('[SPECTRA] Smooth scroll disabled');
+	engine.que = [];
 }
