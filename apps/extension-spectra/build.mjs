@@ -19,8 +19,9 @@ const publicDir = resolve(__dirname, 'public');
 const isWatch = process.argv.includes('--watch');
 const isDev = process.argv.includes('--dev') || isWatch;
 
-// Run verify-architecture first (skip in watch mode for speed)
-if (!isWatch) {
+// Run verify-architecture first (skip in watch mode for speed, skip if not exists for public repo)
+const verifyPath = resolve(__dirname, '../../scripts/verify-architecture.js');
+if (!isWatch && existsSync(verifyPath)) {
 	try {
 		console.log('🔍 Running verify-architecture...');
 		execSync('node ../../scripts/verify-architecture.js', { stdio: 'inherit', cwd: __dirname });
