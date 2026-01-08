@@ -2,7 +2,7 @@
 // note: Both CAPTURE and WEBAUDIO modes need pause/resume during fullscreen
 // reason: createMediaElementSource() permanently binds to HTMLMediaElement, causing Chrome pipeline deadlock
 
-import { AudioMode } from '@nexus/audio-engine';
+import { AudioMode, type AudioModeType } from '@nexus/audio-engine';
 import { logger } from '../../../shared/logger';
 import type { PolicyExecutorState } from '../../types';
 import type { CaptureManager } from '../../audio/capture-manager';
@@ -32,6 +32,8 @@ export function setupFullscreenHandler(
 	if (!cfg.enabled) return () => { };
 
 	let savedVolume: number | null = null;
+	// inv: tracks original mode before fullscreen pause for correct restore behavior
+	let savedMode: AudioModeType | null = null;
 	let restoreTimer: ReturnType<typeof setTimeout> | null = null;
 	let pausedForFullscreen = false;
 	let pauseCount = 0;
@@ -54,6 +56,7 @@ export function setupFullscreenHandler(
 
 		if (!pausedForFullscreen) {
 			savedVolume = state.config.volume;
+			savedMode = state.activeMode as AudioModeType | null; // save original mode for restore
 			pausedForFullscreen = true;
 
 			if (isCapture) {
@@ -92,10 +95,13 @@ export function setupFullscreenHandler(
 		}, cfg.restoreDelayMs);
 	}
 
-	// eff: re-activates capture with previously saved settings
+	// eff: re-activates audio mode based on what was paused (CAPTURE or WEBAUDIO)
 	function restoreAudio(): void {
 		if (!pausedForFullscreen) return;
 		pausedForFullscreen = false;
+
+		const modeToRestore = savedMode;
+		savedMode = null;
 
 		if (!state.config.enabled) {
 			savedVolume = null;
@@ -103,12 +109,19 @@ export function setupFullscreenHandler(
 		}
 
 		const vol = savedVolume ?? state.config.volume;
-		log.info(`[FS] Restoring capture, volume ${vol}%`);
 		state.userHasInteracted = true;
-
-		captureManager.request(true, { ...state.config, volume: vol });
 		savedVolume = null;
 
+		// rule: only request CAPTURE if we were in CAPTURE mode before fullscreen
+		if (modeToRestore === AudioMode.CAPTURE) {
+			log.info(`[FS] Restoring CAPTURE, volume ${vol}%`);
+			captureManager.request(true, { ...state.config, volume: vol });
+		} else {
+			// note: WEBAUDIO mode - just trigger applyState to reinitialize WebAudio pipeline
+			log.info(`[FS] Restoring WEBAUDIO, volume ${vol}%`);
+		}
+
+		// eff: always trigger applyState to ensure proper mode execution
 		setTimeout(() => policyExecutor.applyState(), 100);
 	}
 

@@ -4,8 +4,8 @@
 import { AudioMode } from '@nexus/audio-engine';
 import { WebAudioController } from '@nexus/audio-engine';
 import { isExtensionContextValid } from '../context-guard';
-import type { PolicyExecutorState } from '../../types';
-import type { PolicyExecutor } from '../../logic/policy-executor';
+import type { PolicyExecutorState } from '../types';
+import type { PolicyExecutor } from '../policy-executor';
 
 // eff: initializes a MutationObserver on the document root and triggers state re-application upon change detection
 // post: returns a cleanup function to disconnect the observer and clear pending timeouts
@@ -17,7 +17,7 @@ export function createMediaObserver(
 	let observerTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	const observer = new MutationObserver(() => {
-		// rule: execution is halted if the extension context becomes invalid
+		// rule: execution is halted if the extension context becomes invalid (e.g. extension updated/reloaded)
 		if (observerTimeout) clearTimeout(observerTimeout);
 		observerTimeout = setTimeout(() => {
 			if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) {
@@ -26,7 +26,6 @@ export function createMediaObserver(
 			policyExecutor.applyState();
 		}, 500);
 	});
-
 
 	observer.observe(document.documentElement, {
 		childList: true,
