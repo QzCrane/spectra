@@ -23,8 +23,7 @@
       "@nexus/kernel": ["packages/nexus-kernel/src"],
       "@nexus/ui-kit": ["packages/ui-kit/src"],
       "@nexus/audio-engine": ["packages/features/audio-engine/src"],
-      "@nexus/ai-engine": ["packages/features/ai-engine/src"],
-      "@nexus/zen-engine": ["packages/features/zen-engine/src"]
+      "@nexus/ai-engine": ["packages/features/ai-engine/src"]
     },
     "types": ["chrome-types"]
   },

@@ -1,13 +1,13 @@
 /**
- * SPECTRA Build Script
- * 
- * Builds background, content, popup separately as IIFE format
+ * SPECTRA Build Script (esbuild)
+ * Unified with Halo build system
  */
 
-import { build } from 'vite';
+import esbuild from 'esbuild';
+import { cpSync, rmSync, existsSync, mkdirSync, statSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-import { cpSync, rmSync, existsSync, writeFileSync, readFileSync } from 'fs';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -15,94 +15,105 @@ const __dirname = dirname(__filename);
 const distDir = resolve(__dirname, 'dist');
 const publicDir = resolve(__dirname, 'public');
 
+// Parse args
+const isWatch = process.argv.includes('--watch');
+const isDev = process.argv.includes('--dev') || isWatch;
+
+// Run verify-architecture first (skip in watch mode for speed)
+if (!isWatch) {
+	try {
+		console.log('🔍 Running verify-architecture...');
+		execSync('node ../../scripts/verify-architecture.js', { stdio: 'inherit', cwd: __dirname });
+	} catch {
+		console.error('⚠️ verify-architecture failed, continuing build...');
+	}
+}
+
 // Clean dist directory
 if (existsSync(distDir)) {
-  rmSync(distDir, { recursive: true });
+	rmSync(distDir, { recursive: true });
 }
+mkdirSync(distDir, { recursive: true });
 
-// 1. Copy public directory (contains manifest/icon and other static files)
+// Copy public directory
 cpSync(publicDir, distDir, { recursive: true });
-// Verify build directory exists
-if (!existsSync(distDir)) {
-  console.error("Dist directory not created!");
-}
+console.log('✓ Copied public files');
 
-// Common build configuration
-const commonResolve = {
-  alias: {
-    '@nexus/contracts': resolve(__dirname, '../../packages/contracts/dist/index.js'),
-    '@nexus/kernel': resolve(__dirname, '../../packages/nexus-kernel/dist/index.js'),
-    '@nexus/audio-engine': resolve(__dirname, '../../packages/features/audio-engine/dist/index.js')
-  }
+const commonConfig = {
+	bundle: true,
+	minify: !isDev,
+	sourcemap: isDev ? 'inline' : false,
+	define: {
+		'process.env.NODE_ENV': isDev ? '"development"' : '"production"'
+	},
+	loader: { '.ts': 'ts', '.tsx': 'tsx' },
+	alias: {
+		'@nexus/contracts': resolve(__dirname, '../../packages/contracts/dist/index.js'),
+		'@nexus/kernel': resolve(__dirname, '../../packages/nexus-kernel/dist/index.js'),
+		'@nexus/audio-engine': resolve(__dirname, '../../packages/features/audio-engine/dist/index.js')
+	}
 };
 
-// detect dev mode
-const isDev = process.argv.includes('--dev') || process.argv.includes('--watch');
+// Build entries
+const entries = [
+	{ entry: 'src/background/index.ts', out: 'background.js' },
+	{ entry: 'src/content/core/index.ts', out: 'content.js' },
+	{ entry: 'src/popup/index.ts', out: 'popup.js' },
+	{ entry: 'src/offscreen/index.ts', out: 'offscreen.js' },
+	{ entry: 'src/offscreen-remote/index.ts', out: 'offscreen-remote.js' },
+	{ entry: 'src/options/index.ts', out: 'options.js' },
+	{ entry: 'src/injector/index.ts', out: 'injector.js' }
+];
 
-// ...
-
-// Build function - uses Rollup output
-async function buildEntry(entry, outputName, globalName) {
-  const result = await build({
-    configFile: false,
-    logLevel: 'warn',
-    build: {
-      write: false, // don't auto-write, manual control
-      lib: {
-        entry: resolve(__dirname, entry),
-        name: globalName,
-        formats: ['iife']
-      },
-      rollupOptions: {
-        output: {
-          inlineDynamicImports: true,
-          entryFileNames: `${outputName}.js`
-        }
-      },
-      minify: !isDev,
-      sourcemap: isDev ? 'inline' : false
-    },
-    resolve: commonResolve
-  });
-
-  // result may be array (multi-entry) or single object
-  const outputs = Array.isArray(result) ? result : [result];
-  
-  for (const bundle of outputs) {
-    if (bundle && bundle.output) {
-      for (const chunk of bundle.output) {
-        if (chunk.type === 'chunk' && chunk.isEntry) {
-          const outputPath = resolve(distDir, `${outputName}.js`);
-          writeFileSync(outputPath, chunk.code);
-          console.log(`✓ Built ${outputName}.js (${(chunk.code.length / 1024).toFixed(2)} KB)`);
-          return;
-        }
-      }
-    }
-  }
-  console.error(`✗ Failed to build ${outputName}.js - no entry chunk found`);
+if (isWatch) {
+	// Watch mode - use esbuild context for incremental builds
+	console.log('👀 Watch mode enabled - waiting for changes...\n');
+	
+	const contexts = await Promise.all(entries.map(async ({ entry, out }) => {
+		const ctx = await esbuild.context({
+			...commonConfig,
+			entryPoints: [entry],
+			outfile: `dist/${out}`,
+			logLevel: 'info',
+			plugins: [{
+				name: 'rebuild-notify',
+				setup(build) {
+					build.onEnd(result => {
+						if (result.errors.length === 0) {
+							console.log(`✓ Rebuilt ${out}`);
+						}
+					});
+				}
+			}]
+		});
+		await ctx.watch();
+		return ctx;
+	}));
+	
+	// Keep process alive
+	process.on('SIGINT', async () => {
+		console.log('\n🛑 Stopping watch...');
+		await Promise.all(contexts.map(ctx => ctx.dispose()));
+		process.exit(0);
+	});
+	
+} else {
+	// Normal build
+	await Promise.all(entries.map(async ({ entry, out }) => {
+		try {
+			await esbuild.build({
+				...commonConfig,
+				entryPoints: [entry],
+				outfile: `dist/${out}`,
+				write: true
+			});
+			const stats = statSync(`dist/${out}`);
+			console.log(`✓ Built ${out} (${(stats.size / 1024).toFixed(2)} KB)`);
+		} catch (e) {
+			console.error(`✗ Failed to build ${out}:`, e.message);
+			process.exit(1);
+		}
+	}));
+	
+	console.log('\n🎉 Build complete! Output: apps/extension-spectra/dist');
 }
-
-// 2. Build background.js
-await buildEntry('src/background/index.ts', 'background', 'SpectraBackground');
-
-// 3. Build content.js
-await buildEntry('src/content/core/index.ts', 'content', 'SpectraContent');
-
-// 4. Build popup.js
-await buildEntry('src/popup/index.ts', 'popup', 'SpectraPopup');
-
-// 5. Build offscreen.js
-await buildEntry('src/offscreen/index.ts', 'offscreen', 'SpectraOffscreen');
-
-// 6. Build offscreen-remote.js (PeerJS WebRTC)
-await buildEntry('src/offscreen-remote/index.ts', 'offscreen-remote', 'SpectraOffscreenRemote');
-
-// 7. Build options.js (settings page)
-await buildEntry('src/options/index.ts', 'options', 'SpectraOptions');
-
-// 8. Build injector.js (Logic for hijacking native APIs)
-await buildEntry('src/injector/index.ts', 'injector', 'SpectraInjector');
-
-console.log('\n🎉 Build complete! Output: apps/extension-spectra/dist');
-
