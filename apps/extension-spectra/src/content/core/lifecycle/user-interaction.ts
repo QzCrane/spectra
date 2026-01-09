@@ -65,17 +65,17 @@ export function setupPopupConnectionListener(
 }
 
 // eff: reads current DOM volume and syncs to state if not already interacted
+// rule: only sync volume (for UI display), NEVER sync muted state from DOM
+// theory: sites like bilibili have default-muted videos that should not pollute plugin state
 function syncDomVolumeToState(state: PolicyExecutorState): void {
 	const media = document.querySelector('video, audio') as HTMLMediaElement | null;
 	if (!media) return;
 
-	// rule: only sync if user hasn't explicitly set volume via plugin
+	// rule: only sync volume if user hasn't explicitly set it via plugin
+	// note: we intentionally skip syncing muted state to prevent default-muted sites from hijacking plugin state
 	if (!state.userHasInteracted) {
 		const currentVol = Math.round(media.volume * 100);
-		const currentMuted = media.muted;
-
-		// note: update state to reflect current DOM volume for UI display
+		// note: update ONLY volume for UI display, preserve plugin's muted state
 		state.config.volume = currentVol;
-		state.config.muted = currentMuted;
 	}
 }

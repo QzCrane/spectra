@@ -6,9 +6,11 @@
 	"description": "Project NEXUS - Chrome Extension Ecosystem (SPECTRA,  HALO)",
 	"scripts": {
 		"dev": "turbo run dev",
-		"build": "turbo run build",
+		"build": "turbo run build --output-logs=new-only",
 		"lint": "turbo run lint",
 		"typecheck": "turbo run typecheck",
+		"verify:q": "node scripts/verify-architecture.js -q",
+		"verify:v": "node scripts/verify-architecture.js -v",
 		"generate-registry": "node scripts/generate-tool-registry.mjs"
 	},
 	"devDependencies": {

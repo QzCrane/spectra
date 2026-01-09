@@ -1,6 +1,7 @@
 /**
  * SPECTRA Build Script (esbuild)
- * Unified with Halo build system
+ * goal: fast TypeScript build with pre-flight checks
+ * output: compressed single-line logs per step
  */
 
 import esbuild from 'esbuild';
@@ -15,38 +16,44 @@ const __dirname = dirname(__filename);
 const distDir = resolve(__dirname, 'dist');
 const publicDir = resolve(__dirname, 'public');
 
-// Parse args
 const isWatch = process.argv.includes('--watch');
 const isDev = process.argv.includes('--dev') || isWatch;
 
-// Run verify-architecture first (skip in watch mode for speed, skip if not exists for public repo)
-const verifyPath = resolve(__dirname, '../../scripts/verify-architecture.js');
-if (!isWatch && existsSync(verifyPath)) {
+// Helper: run command with compressed output
+function run(label, cmd, opts = {}) {
 	try {
-		console.log('🔍 Running verify-architecture...');
-		execSync('node ../../scripts/verify-architecture.js', { stdio: 'inherit', cwd: __dirname });
-	} catch {
-		console.error('⚠️ verify-architecture failed, continuing build...');
+		execSync(cmd, { stdio: 'pipe', cwd: __dirname, ...opts });
+		return true;
+	} catch (e) {
+		if (opts.silent) return false;
+		console.error(`❌ ${label}: ${e.stderr?.toString().trim() || e.message}`);
+		return false;
 	}
 }
 
-// Clean dist directory
-if (existsSync(distDir)) {
-	rmSync(distDir, { recursive: true });
+// Pre-flight checks (skip in watch mode)
+if (!isWatch) {
+	const verifyPath = resolve(__dirname, '../../scripts/verify-architecture.js');
+	if (existsSync(verifyPath)) {
+		run('verify', 'node ../../scripts/verify-architecture.js', { silent: true });
+	}
+	
+	if (!run('tsc', 'npx tsc --noEmit --skipLibCheck')) {
+		process.exit(1);
+	}
+	console.log('✓ Pre-flight: tsc OK');
 }
-mkdirSync(distDir, { recursive: true });
 
-// Copy public directory
+// Prepare dist
+if (existsSync(distDir)) rmSync(distDir, { recursive: true });
+mkdirSync(distDir, { recursive: true });
 cpSync(publicDir, distDir, { recursive: true });
-console.log('✓ Copied public files');
 
 const commonConfig = {
 	bundle: true,
 	minify: !isDev,
 	sourcemap: isDev ? 'inline' : false,
-	define: {
-		'process.env.NODE_ENV': isDev ? '"development"' : '"production"'
-	},
+	define: { 'process.env.NODE_ENV': isDev ? '"development"' : '"production"' },
 	loader: { '.ts': 'ts', '.tsx': 'tsx' },
 	alias: {
 		'@nexus/contracts': resolve(__dirname, '../../packages/contracts/dist/index.js'),
@@ -55,7 +62,6 @@ const commonConfig = {
 	}
 };
 
-// Build entries
 const entries = [
 	{ entry: 'src/background/index.ts', out: 'background.js' },
 	{ entry: 'src/content/core/index.ts', out: 'content.js' },
@@ -67,23 +73,17 @@ const entries = [
 ];
 
 if (isWatch) {
-	// Watch mode - use esbuild context for incremental builds
-	console.log('👀 Watch mode enabled - waiting for changes...\n');
-	
+	console.log('👀 Watch mode...');
 	const contexts = await Promise.all(entries.map(async ({ entry, out }) => {
 		const ctx = await esbuild.context({
 			...commonConfig,
 			entryPoints: [entry],
 			outfile: `dist/${out}`,
-			logLevel: 'info',
+			logLevel: 'warning',
 			plugins: [{
 				name: 'rebuild-notify',
 				setup(build) {
-					build.onEnd(result => {
-						if (result.errors.length === 0) {
-							console.log(`✓ Rebuilt ${out}`);
-						}
-					});
+					build.onEnd(r => r.errors.length === 0 && console.log(`✓ ${out}`));
 				}
 			}]
 		});
@@ -91,30 +91,25 @@ if (isWatch) {
 		return ctx;
 	}));
 	
-	// Keep process alive
 	process.on('SIGINT', async () => {
-		console.log('\n🛑 Stopping watch...');
 		await Promise.all(contexts.map(ctx => ctx.dispose()));
 		process.exit(0);
 	});
 	
 } else {
-	// Normal build
-	await Promise.all(entries.map(async ({ entry, out }) => {
+	// Build all entries in parallel, collect results
+	const results = await Promise.all(entries.map(async ({ entry, out }) => {
 		try {
-			await esbuild.build({
-				...commonConfig,
-				entryPoints: [entry],
-				outfile: `dist/${out}`,
-				write: true
-			});
-			const stats = statSync(`dist/${out}`);
-			console.log(`✓ Built ${out} (${(stats.size / 1024).toFixed(2)} KB)`);
+			await esbuild.build({ ...commonConfig, entryPoints: [entry], outfile: `dist/${out}`, write: true });
+			const kb = (statSync(`dist/${out}`).size / 1024).toFixed(0);
+			return `${out.replace('.js', '')}:${kb}KB`;
 		} catch (e) {
-			console.error(`✗ Failed to build ${out}:`, e.message);
+			console.error(`❌ ${out}: ${e.message}`);
 			process.exit(1);
 		}
 	}));
 	
-	console.log('\n🎉 Build complete! Output: apps/extension-spectra/dist');
+	// Single line output: all bundles with sizes
+	console.log(`✓ Build: ${results.join(' | ')}`);
+	console.log(`🎉 Done → dist/`);
 }
