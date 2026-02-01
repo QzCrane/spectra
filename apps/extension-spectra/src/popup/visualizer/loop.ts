@@ -12,26 +12,22 @@ export interface VizLoopParams {
   getConfig: () => { enabled: boolean; muted: boolean };
   getCapturing: () => boolean;
   getGlobalSettings: () => GlobalSettings;
-  // initialPredictedCapture: if true, implies tabCapture is spinning up; requires a startup delay to avoid stale offscreen errors
   initialPredictedCapture: boolean;
   isCaptureActive: boolean;
 }
 
 // post: returns a deferred start function that initiates the recursive requestAnimationFrame loop
 export function createVizLoop(params: VizLoopParams): () => void {
-  const {
-    canvas,
-    tabId,
-    getConfig,
-    getCapturing,
-    getGlobalSettings,
-    initialPredictedCapture,
-    isCaptureActive,
-  } = params;
+  const { canvas, tabId, getConfig, getCapturing, getGlobalSettings, initialPredictedCapture, isCaptureActive } = params;
 
   let isRequesting = false;
   let lastDraw = 0;
   let loopStarted = false;
+
+  // eff: reusable msg objects to reduce gc pressure
+  const msgOffscreen = { target: 'offscreen', action: OffscreenActions.OFFSCREEN_GET_VIZ, tabId };
+  // note: sendToTab wrapper might still alloc, but at least we can optimize the payload if needed
+  // sendToTab signature: (tabId, action, payload), payload is {} here
 
   const loop = async (timestamp: number) => {
     // rule: throttle rendering to ~30 FPS to reduce CPU overhead in the popup process
@@ -59,28 +55,21 @@ export function createVizLoop(params: VizLoopParams): () => void {
 
         try {
           if (currentCapturing) {
-            // mode: Capture -> poll high-fidelity spectral data from the offscreen document (PeerJS or direct)
-            const res = await chrome.runtime.sendMessage({
-              target: 'offscreen',
-              action: OffscreenActions.OFFSCREEN_GET_VIZ,
-              tabId,
-            }).catch(() => null);
-
+            // mode: Capture -> poll high-fidelity spectral data from the offscreen document
+            const res = await chrome.runtime.sendMessage(msgOffscreen).catch(() => null);
             if (res?.buffer) {
               buffer = res.buffer;
             } else {
-              // note: fallback to content script probe if offscreen document is non-responsive or bridge is broken
+              // note: fallback to content script probe
               const data = await sendToTab<{ buffer: number[] }>(tabId, 'AUDIO_GET_VISUALIZER', {});
               if (data?.buffer) buffer = data.buffer;
             }
           } else {
-            // mode: Native -> poll data directly from the content script's localized AnalyserNode
+            // mode: Native -> poll data directly from the content script
             const data = await sendToTab<{ buffer: number[] }>(tabId, 'AUDIO_GET_VISUALIZER', {});
             if (data?.buffer) buffer = data.buffer;
           }
-        } catch {
-          // silent fail
-        }
+        } catch { } // silent fail
 
         drawViz(canvas, buffer, false, currentCapturing);
         isRequesting = false;
@@ -93,14 +82,10 @@ export function createVizLoop(params: VizLoopParams): () => void {
   };
 
   const startLoop = () => {
-    if (!loopStarted) {
-      loopStarted = true;
-      requestAnimationFrame(loop);
-    }
+    if (!loopStarted) { loopStarted = true; requestAnimationFrame(loop); }
   };
 
   return () => {
-    // note: use a safety delay if starting during capture initialization to allow the WebAudio graph to stabilize
     if (initialPredictedCapture && !isCaptureActive) {
       setTimeout(startLoop, TIMING.CAPTURE_INIT_DELAY);
     } else {

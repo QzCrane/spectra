@@ -8,14 +8,10 @@ import { swLog } from '../shared/logger';
 export function setupLifecycleListeners(): void {
 	chrome.tabs.onActivated.addListener((activeInfo) => {
 		const now = Date.now();
-		const existing = tabAudioStates.get(activeInfo.tabId);
-
-		if (existing) {
-			tabAudioStates.set(activeInfo.tabId, {
-				...existing,
-				lastActivatedTime: now,
-				userManuallyActivated: true, // inv: user interaction confirmed for the current session
-			});
+		const s = tabAudioStates.get(activeInfo.tabId);
+		if (s) {
+			s.lastActivatedTime = now;
+			s.userManuallyActivated = true;
 		} else {
 			tabAudioStates.set(activeInfo.tabId, {
 				hasMediaElement: false,
@@ -29,17 +25,9 @@ export function setupLifecycleListeners(): void {
 	chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 		// eff: update activity timestamp if the tab generates sound
 		if (changeInfo.audible !== undefined) {
-			const now = Date.now();
-			const existing = tabAudioStates.get(tabId);
-
-			if (changeInfo.audible && existing) {
-				tabAudioStates.set(tabId, {
-					...existing,
-					lastAudibleTime: now,
-				});
-			}
+			const s = tabAudioStates.get(tabId);
+			if (changeInfo.audible && s) s.lastAudibleTime = Date.now();
 		}
-
 		if (changeInfo.status === 'loading' && changeInfo.url) {
 			// note: reload triggers automatic browser-side capture termination
 		}
@@ -47,13 +35,7 @@ export function setupLifecycleListeners(): void {
 
 	chrome.tabs.onRemoved.addListener((tabId) => {
 		cleanupTabState(tabId);
-
-		// eff: clean up tab session config from storage
 		storage.tabSession.remove(tabId).catch(() => { });
-
-		if (captureStates.get(tabId)) {
-			// eff: force cleanup capture state if the tab is closed while active
-			handleCaptureToggle(tabId, false);
-		}
+		if (captureStates.get(tabId)) handleCaptureToggle(tabId, false);
 	});
 }

@@ -10,35 +10,22 @@ export function registerAudioHandlers(): void {
 	router.on(Actions.AUDIO_GET_STATUS, async (_, sender) => {
 		const tabId = sender.tab?.id;
 		const url = sender.tab?.url || '';
-
 		let domain = '';
-		try {
-			domain = new URL(url).hostname;
-		} catch { }
+		// eff: simple regex extract instead of full URL parse
+		const m = url.match(/:\/\/(.[^/]+)/);
+		if (m && m[1]) domain = m[1];
 
 		// Priority: tab session config > domain preset > global default
 		let config = null;
 		if (tabId) {
-			try {
-				config = await storage.tabSession.get(tabId);
-			} catch {
-				// note: session storage may not be available, fallback to domain preset
-			}
+			try { config = await storage.tabSession.get(tabId); } catch { }
 		}
-		if (!config) {
-			config = await storage.getAudioConfig(domain);
-		}
+		if (!config) config = await storage.getAudioConfig(domain);
 
 		const isCapture = tabId ? (captureStates.get(tabId) ?? false) : false;
 
 		// post: returns baseline configuration; runtime playback state is refined by the content script
-		return {
-			config,
-			hasAudio: true,
-			isPlaying: false,
-			mode: isCapture ? 'CAPTURE' : 'NATIVE_WEBAUDIO',
-			userInteracted: false
-		};
+		return { config, hasAudio: true, isPlaying: false, mode: isCapture ? 'CAPTURE' : 'NATIVE_WEBAUDIO', userInteracted: false };
 	});
 
 	// eff: syncs config to tab session only (not domain preset)
@@ -47,17 +34,11 @@ export function registerAudioHandlers(): void {
 		if (!tabId) return { success: false };
 
 		if (req.config) {
-			// rule: remove transient control fields (toggleMute, volumeDelta) before persisting
-			const cleanConfig = { ...req.config };
-			delete (cleanConfig as any).toggleMute;
-			delete (cleanConfig as any).volumeDelta;
-
-			// note: only save to tab session, NOT to domain preset
-			try {
-				await storage.tabSession.set(tabId, cleanConfig);
-			} catch {
-				// note: session storage may fail, continue without persistence
-			}
+			// rule: mutate incoming object directly (it's ephemeral) instead of spread
+			const c = req.config as any; // Cast to access optional delta/toggle
+			if (c.toggleMute !== undefined) delete c.toggleMute;
+			if (c.volumeDelta !== undefined) delete c.volumeDelta;
+			try { await storage.tabSession.set(tabId, req.config); } catch { }
 		}
 		return { success: true };
 	});

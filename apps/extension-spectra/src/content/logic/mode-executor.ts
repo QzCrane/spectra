@@ -3,7 +3,8 @@
 import { AudioMode } from '@nexus/audio-engine';
 import type { AudioConfig } from '@nexus/kernel';
 import type { PolicyExecutorDeps, PolicyExecutorState } from '../types';
-import { setDomVolume, isAnyMediaPlaying, releaseVolumeLock, enableVolumeLock, setNativeVolumeCallback, markUserInteracted as markDomUserInteracted, enableDirectTake, hasUserInteracted as hasDomUserInteracted } from '../audio/dom-volume';
+import { setDomVolume, isAnyMediaPlaying, releaseVolumeLock, enableVolumeLock, setNativeVolumeCallback, setNativeSpeedCallback, markUserInteracted as markDomUserInteracted, enableDirectTake, hasUserInteracted as hasDomUserInteracted } from '../audio/dom-volume';
+import { setSpeed } from './media-control';
 import { logger } from '../../shared/logger';
 
 const log = logger.content;
@@ -24,6 +25,29 @@ function notifyWebAudioState(active: boolean): void {
 }
 
 // eff: binds shared state and cross-module callbacks to the mode executor
+// eff: register global handler for native changes
+function handleNativeVolume(volume: number, muted: boolean) {
+	if (!currentState || !currentDeps || !currentUpdateConfig) return;
+	const ch: Partial<AudioConfig> = {};
+	if (volume < 0) {
+		ch.muted = muted;
+		log.debug(`[Native] Mute: ${muted}`);
+	} else {
+		ch.volume = (volume * 100) | 0; ch.muted = muted;
+		log.debug(`[Native] Vol: ${ch.volume}%`);
+	}
+	currentUpdateConfig(ch, { isNativeSync: true });
+}
+
+function handleNativeSpeed(speed: number) {
+	if (!currentState || !currentDeps || !currentUpdateConfig) return;
+	// note: avoid trivial updates
+	if (Math.abs((currentState.config.speed || 1) - speed) < 0.05) return;
+
+	log.debug(`[Native] Speed: ${speed}x`);
+	currentUpdateConfig({ speed }, { isNativeSync: true });
+}
+
 export function initModeExecutorCallbacks(
 	deps: PolicyExecutorDeps,
 	state: PolicyExecutorState,
@@ -37,27 +61,8 @@ export function initModeExecutorCallbacks(
 	currentUpdateBadge = updateBadge;
 	currentBroadcastUI = broadcastUI;
 	currentUpdateConfig = updateConfig;
-
-	// eff: registers a callback to handle native volume changes initiated by the website UI
-	setNativeVolumeCallback((volume, muted) => {
-		if (!currentState || !currentDeps || !currentUpdateConfig) return;
-
-		const changes: Partial<AudioConfig> = {};
-
-		// note: volume < 0 signals a mute-only toggle without altering the numeric volume percentage
-		if (volume < 0) {
-			changes.muted = muted;
-			log.debug(`[SPECTRA] Native mute toggle: ${muted}`);
-		} else {
-			// rule: sync both volume and muted state for complete native UI compatibility
-			changes.volume = Math.round(volume * 100);
-			changes.muted = muted;
-			log.debug(`[SPECTRA] Native volume sync: ${changes.volume}% (muted: ${muted})`);
-		}
-
-		// eff: update config through unified updater to ensure immutable patterns and side-effects
-		currentUpdateConfig(changes, { isNativeSync: true });
-	});
+	setNativeVolumeCallback(handleNativeVolume);
+	setNativeSpeedCallback(handleNativeSpeed);
 }
 
 // post: returns true if the user has engaged with the page, making it safe to initialize AudioContext
@@ -78,6 +83,9 @@ export function executeMode(deps: PolicyExecutorDeps, state: PolicyExecutorState
 	const { audioController, captureManager } = deps;
 	const mode = state.activeMode;
 	const config = state.config;
+
+	// eff: sync playback speed from config to current page media
+	setSpeed(config.speed || 1.0);
 
 	if (mode === AudioMode.CAPTURE) {
 		notifyWebAudioState(false); // exiting WEBAUDIO mode

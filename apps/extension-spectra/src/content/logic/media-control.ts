@@ -1,131 +1,106 @@
-// goal: provides direct DOM control for playback, picture-in-picture, and playback rate orchestration
-// rule: operations always target the "primary" video element, defined as the largest visible video on the page
+// goal: provides direct DOM control for playback, picture-in-picture, and playback rate
+// role: operations target the "primary" video element (largest visible)
 
 import { createLogger } from '../../shared/logger';
 import { simulateMouseHover } from '../utils/focus-helper';
 
 const log = createLogger('MediaControl');
 
-// role: logic for identifying the primary video element based on viewport area
+// eff: single pass O(N) zero-alloc
 function getPrimaryVideo(): HTMLVideoElement | null {
-	const videos = Array.from(document.querySelectorAll('video'));
-	if (!videos.length) return null;
+	const v = document.getElementsByTagName('video');
+	let best: HTMLVideoElement | null = null;
+	let maxA = 0;
 
-	const visible = videos.filter(v => {
-		const rect = v.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
-	});
-
-	if (!visible.length) return videos[0] ?? null;
-
-	visible.sort((a, b) => {
-		const aRect = a.getBoundingClientRect();
-		const bRect = b.getBoundingClientRect();
-		return (bRect.width * bRect.height) - (aRect.width * aRect.height);
-	});
-
-	return visible[0] ?? null;
+	for (let i = 0, l = v.length; i < l; i++) {
+		const el = v[i];
+		if (!el) continue;
+		const rect = el.getBoundingClientRect();
+		const a = rect.width * rect.height;
+		if (a > maxA) { maxA = a; best = el; }
+	}
+	// eff: Safe fallback
+	return best || (v.length > 0 ? v[0]! : null);
 }
 
-function getAllMedia(): HTMLMediaElement[] {
-	return [
-		...Array.from(document.querySelectorAll('video')),
-		...Array.from(document.querySelectorAll('audio')),
-	];
+// eff: live collections iteration
+export function setSpeed(s: number, pitch?: boolean): { speed: number; preservePitch: boolean } {
+	const clamped = Math.max(0.1, Math.min(16, s));
+	const p = pitch ?? true;
+
+	const vs = document.getElementsByTagName('video');
+	const as = document.getElementsByTagName('audio');
+
+	const apply = (m: HTMLMediaElement) => {
+		if (Math.abs(m.playbackRate - clamped) > 0.005) {
+			m.playbackRate = clamped;
+		}
+		if ('preservesPitch' in m) (m as any).preservesPitch = p;
+	};
+
+	for (let i = 0; i < vs.length; i++) { const m = vs[i]; if (m) apply(m); }
+	for (let i = 0; i < as.length; i++) { const m = as[i]; if (m) apply(m); }
+
+	log.info(`Speed ${clamped}x, pitch=${p}`);
+	return { speed: clamped, preservePitch: p };
 }
 
 export function togglePlay(): boolean {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return false;
-	}
+	const v = getPrimaryVideo();
+	if (!v) { log.warn('No video'); return false; }
 
-	if (video.paused) {
-		video.play().catch(e => log.error('Play failed:', e));
+	if (v.paused) {
+		v.play().catch(e => log.error('Play fail:', e));
 		return true;
 	} else {
-		video.pause();
+		v.pause();
 		return false;
 	}
 }
 
-// eff: toggles Picture-in-Picture mode and attempts to restore focus to the video element afterwards
 export async function togglePip(): Promise<boolean> {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return false;
-	}
+	const v = getPrimaryVideo();
+	if (!v) { log.warn('No video'); return false; }
 
 	try {
-		let result: boolean;
-		if (document.pictureInPictureElement === video) {
+		let r: boolean;
+		if (document.pictureInPictureElement === v) {
 			await document.exitPictureInPicture();
-			result = false;
+			r = false;
 		} else {
-			if (document.pictureInPictureElement) {
-				await document.exitPictureInPicture();
-			}
-			await video.requestPictureInPicture();
-			result = true;
+			if (document.pictureInPictureElement) await document.exitPictureInPicture();
+			await v.requestPictureInPicture();
+			r = true;
 		}
-		// note: delay focus restoration to allow for PiP transition animations to complete
-		setTimeout(() => simulateMouseHover(video), 200);
-		return result;
+		setTimeout(() => simulateMouseHover(v), 200);
+		return r;
 	} catch (e) {
-		log.error('PiP toggle failed:', e);
+		log.error('PiP fail:', e);
 		return false;
 	}
 }
 
-// eff: applies playback rate to all media elements on the page
-// rule: speed is clamped between 0.1x and 16.0x (browser limitation)
-export function setSpeed(speed: number, preservePitch?: boolean): { speed: number; preservePitch: boolean } {
-	const clampedSpeed = Math.max(0.1, Math.min(16, speed));
-	const medias = getAllMedia();
-	const shouldPreservePitch = preservePitch ?? true;
-
-	medias.forEach(m => {
-		m.playbackRate = clampedSpeed;
-		// note: HTMLMediaElement.preservesPitch is a standard for maintaining audio pitch during speed shifts
-		if ('preservesPitch' in m) {
-			(m as HTMLMediaElement & { preservesPitch: boolean }).preservesPitch = shouldPreservePitch;
-		}
-	});
-
-	log.info(`Speed set to ${clampedSpeed}x, preservePitch=${shouldPreservePitch}`);
-	return { speed: clampedSpeed, preservePitch: shouldPreservePitch };
-}
-
-export function adjustSpeed(delta: number): { speed: number; preservePitch: boolean } {
-	const video = getPrimaryVideo();
-	const currentSpeed = video?.playbackRate ?? 1;
-	return setSpeed(currentSpeed + delta);
+export function adjustSpeed(d: number): { speed: number; preservePitch: boolean } {
+	const v = getPrimaryVideo();
+	return setSpeed((v?.playbackRate ?? 1) + d);
 }
 
 export function getMediaState(): { playing: boolean; speed: number; pipActive: boolean; preservePitch: boolean } {
-	const video = getPrimaryVideo();
-	const preservePitch = video && 'preservesPitch' in video
-		? (video as HTMLMediaElement & { preservesPitch: boolean }).preservesPitch
-		: true;
+	const v = getPrimaryVideo();
+	const p = v && 'preservesPitch' in v ? (v as any).preservesPitch : true;
 	return {
-		playing: video ? !video.paused : false,
-		speed: video?.playbackRate ?? 1,
+		playing: v ? !v.paused : false,
+		speed: v?.playbackRate ?? 1,
 		pipActive: !!document.pictureInPictureElement,
-		preservePitch,
+		preservePitch: p,
 	};
 }
 
-export function seekVideo(delta: number): number {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return 0;
-	}
-
-	const newTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta));
-	video.currentTime = newTime;
-	log.info(`Seek to ${newTime.toFixed(2)}s (delta: ${delta}s)`);
-	return newTime;
+export function seekVideo(d: number): number {
+	const v = getPrimaryVideo();
+	if (!v) { log.warn('No video'); return 0; }
+	const t = Math.max(0, Math.min(v.duration || 0, v.currentTime + d));
+	v.currentTime = t;
+	log.info(`Seek ${t.toFixed(2)}s`);
+	return t;
 }

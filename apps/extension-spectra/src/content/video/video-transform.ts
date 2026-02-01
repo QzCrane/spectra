@@ -1,195 +1,121 @@
-/**
- * SPECTRA Content Script - Video Transform
- *
- * Responsibility: Video rotation, mirroring, screenshot
- * Uses CSS transform for visual changes without modifying the source.
- */
+// goal: Video rotation, mirroring, screenshot
+// role: uses CSS transform for visual changes without modifying source
 
 import { createLogger } from '../../shared/logger';
 import { simulateMouseHover } from '../utils/focus-helper';
 
 const log = createLogger('VideoTransform');
 
-// ============================================
-// State Management
-// ============================================
+// eff: WeakMaps for per-element state
+const tfState = new WeakMap<HTMLVideoElement, { r: number; m: boolean }>();
+const cpState = new WeakMap<HTMLVideoElement, boolean>();
 
-/** Current transform state (per video) */
-const transformState = new WeakMap<HTMLVideoElement, { rotation: number; mirrored: boolean }>();
-
-function getState(video: HTMLVideoElement): { rotation: number; mirrored: boolean } {
-	let state = transformState.get(video);
-	if (!state) {
-		state = { rotation: 0, mirrored: false };
-		transformState.set(video, state);
-	}
-	return state;
+function getState(v: HTMLVideoElement): { r: number; m: boolean } {
+	let s = tfState.get(v);
+	if (!s) { s = { r: 0, m: false }; tfState.set(v, s); }
+	return s;
 }
 
-function getPrimaryVideo(): HTMLVideoElement | null {
-	const videos = Array.from(document.querySelectorAll('video'));
-	if (!videos.length) return null;
-
-	const visible = videos.filter(v => {
-		const rect = v.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
-	});
-
-	if (!visible.length) return videos[0] ?? null;
-
-	visible.sort((a, b) => {
-		const aRect = a.getBoundingClientRect();
-		const bRect = b.getBoundingClientRect();
-		return (bRect.width * bRect.height) - (aRect.width * aRect.height);
-	});
-
-	return visible[0] ?? null;
+// eff: duplicative logic with media-control, but keep isolated for now
+function getPrimary(): HTMLVideoElement | null {
+	const v = document.getElementsByTagName('video');
+	let best: HTMLVideoElement | null = null;
+	let maxA = 0;
+	for (let i = 0, l = v.length; i < l; i++) {
+		const el = v[i];
+		if (!el) continue;
+		const rect = el.getBoundingClientRect();
+		const a = rect.width * rect.height;
+		if (a > maxA) { maxA = a; best = el; }
+	}
+	return best || (v.length > 0 ? v[0]! : null);
 }
 
-// ============================================
-// Transform Operations
-// ============================================
-
-/** Apply CSS transform */
-function applyTransform(video: HTMLVideoElement): void {
-	const state = getState(video);
-	const transforms: string[] = [];
-
-	if (state.rotation !== 0) {
-		transforms.push(`rotate(${state.rotation}deg)`);
-	}
-	if (state.mirrored) {
-		transforms.push('scaleX(-1)');
-	}
-
-	video.style.transform = transforms.join(' ') || 'none';
-	log.info(`Transform applied: rotation=${state.rotation}, mirrored=${state.mirrored}`);
+function apply(v: HTMLVideoElement) {
+	const s = getState(v);
+	const t: string[] = [];
+	if (s.r !== 0) t.push(`rotate(${s.r}deg)`);
+	if (s.m) t.push('scaleX(-1)');
+	v.style.transform = t.join(' ') || 'none';
+	log.info(`Transform: r=${s.r}, m=${s.m}`);
 }
 
-/** Rotate Video (+90°) */
 export function rotateVideo(): number {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return 0;
-	}
-
-	const state = getState(video);
-	state.rotation = (state.rotation + 90) % 360;
-	applyTransform(video);
-	return state.rotation;
+	const v = getPrimary();
+	if (!v) return 0;
+	const s = getState(v);
+	s.r = (s.r + 90) % 360;
+	apply(v);
+	return s.r;
 }
 
-/** Toggle Mirror */
 export function toggleMirror(): boolean {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return false;
-	}
-
-	const state = getState(video);
-	state.mirrored = !state.mirrored;
-	applyTransform(video);
-	return state.mirrored;
+	const v = getPrimary();
+	if (!v) return false;
+	const s = getState(v);
+	s.m = !s.m;
+	apply(v);
+	return s.m;
 }
 
-/** Screenshot */
 export function takeScreenshot(): string | null {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return null;
-	}
+	const v = getPrimary();
+	if (!v) return null;
 
 	try {
-		const canvas = document.createElement('canvas');
-		canvas.width = video.videoWidth;
-		canvas.height = video.videoHeight;
-
-		const ctx = canvas.getContext('2d');
+		const cvs = document.createElement('canvas');
+		cvs.width = v.videoWidth;
+		cvs.height = v.videoHeight;
+		const ctx = cvs.getContext('2d');
 		if (!ctx) return null;
 
-		// Apply transforms to canvas
-		const state = getState(video);
+		const s = getState(v);
 		ctx.save();
-
-		// Center
-		ctx.translate(canvas.width / 2, canvas.height / 2);
-
-		// Rotate
-		if (state.rotation !== 0) {
-			ctx.rotate((state.rotation * Math.PI) / 180);
-		}
-
-		// Mirror
-		if (state.mirrored) {
-			ctx.scale(-1, 1);
-		}
-
-		// Draw
-		ctx.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2);
+		ctx.translate(cvs.width / 2, cvs.height / 2);
+		if (s.r !== 0) ctx.rotate((s.r * Math.PI) / 180);
+		if (s.m) ctx.scale(-1, 1);
+		ctx.drawImage(v, -v.videoWidth / 2, -v.videoHeight / 2);
 		ctx.restore();
 
-		const dataUrl = canvas.toDataURL('image/png');
-		log.info(`Screenshot taken: ${canvas.width}x${canvas.height}`);
-
-		// Trigger Download
-		const link = document.createElement('a');
-		link.href = dataUrl;
-		link.download = `screenshot_${Date.now()}.png`;
-		link.click();
-
-		return dataUrl;
+		const data = cvs.toDataURL('image/png');
+		const a = document.createElement('a');
+		a.href = data;
+		a.download = `screenshot_${Date.now()}.png`;
+		a.click();
+		return data;
 	} catch (e) {
-		log.error('Screenshot failed:', e);
+		log.error('Screenshot fail:', e);
 		return null;
 	}
 }
 
-/** Toggle Fullscreen */
 export async function toggleFullscreen(): Promise<boolean> {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return false;
-	}
+	const v = getPrimary();
+	if (!v) return false;
 
 	try {
-		let result: boolean;
-		if (document.fullscreenElement === video) {
+		let r: boolean;
+		if (document.fullscreenElement === v) {
 			await document.exitFullscreen();
-			result = false;
+			r = false;
 		} else {
-			await video.requestFullscreen();
-			result = true;
+			await v.requestFullscreen();
+			r = true;
 		}
-		// Delay focus restore
-		setTimeout(() => simulateMouseHover(video), 200);
-		return result;
+		setTimeout(() => simulateMouseHover(v), 200);
+		return r;
 	} catch (e) {
-		log.error('Fullscreen toggle failed:', e);
+		log.error('FS fail:', e);
 		return false;
 	}
 }
 
-const cropState = new WeakMap<HTMLVideoElement, boolean>();
-
-/** Toggle Crop (object-fit: cover) */
 export function toggleCrop(): boolean {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return false;
-	}
-
-	const isCropped = cropState.get(video) ?? false;
-	const newCropped = !isCropped;
-
-	// cover = fill, contain = fit
-	video.style.objectFit = newCropped ? 'cover' : 'contain';
-	cropState.set(video, newCropped);
-
-	log.info(`Crop mode: ${newCropped ? 'cover' : 'contain'}`);
-	return newCropped;
+	const v = getPrimary();
+	if (!v) return false;
+	const c = !(cpState.get(v) ?? false);
+	v.style.objectFit = c ? 'cover' : 'contain';
+	cpState.set(v, c);
+	log.info(`Crop: ${c ? 'cover' : 'contain'}`);
+	return c;
 }

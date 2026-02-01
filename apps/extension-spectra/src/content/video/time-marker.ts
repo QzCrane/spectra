@@ -25,69 +25,53 @@ function formatTime(seconds: number): string {
 
 // post: returns the largest visible video element on the page, or the first available video as fallback
 function getPrimaryVideo(): HTMLVideoElement | null {
-	const videos = Array.from(document.querySelectorAll('video'));
-	if (!videos.length) return null;
-	const visible = videos.filter(v => {
-		const rect = v.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
-	});
-	if (!visible.length) return videos[0] ?? null;
-	visible.sort((a, b) => {
-		const aRect = a.getBoundingClientRect();
-		const bRect = b.getBoundingClientRect();
-		return (bRect.width * bRect.height) - (aRect.width * aRect.height);
-	});
-	return visible[0] ?? null;
+	const v = document.getElementsByTagName('video');
+	let best: HTMLVideoElement | null = null;
+	let maxA = 0;
+	// eff: Safe live collection iteration
+	for (let i = 0, l = v.length; i < l; i++) {
+		const el = v[i];
+		if (!el) continue;
+		const r = el.getBoundingClientRect();
+		const a = r.width * r.height;
+		if (a > maxA) { maxA = a; best = el; }
+	}
+	// eff: Safe return
+	return best || (v.length > 0 ? v[0]! : null);
 }
 
-// eff: captures the current timestamp of the primary video and creates a labeled marker
+// eff: captures timestamps
 export function addMarker(label?: string): TimeMarker | null {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return null;
-	}
+	const v = getPrimaryVideo();
+	if (!v) { log.warn('No video'); return null; }
 
-	const time = video.currentTime;
-	const defaultLabel = label || `Mark @ ${formatTime(time)}`;
-	const marker: TimeMarker = {
-		id: generateId(),
-		time,
-		label: defaultLabel
-	};
+	const t = v.currentTime;
+	const m: TimeMarker = { id: generateId(), time: t, label: label || `Mark @ ${formatTime(t)}` };
 
-	markers.push(marker);
-	// rule: markers are always kept chronologically sorted for UI consistency
+	markers.push(m);
 	markers.sort((a, b) => a.time - b.time);
-	log.info(`Added marker: ${marker.label} at ${formatTime(time)}`);
-	return marker;
+	log.info(`Added: ${m.label}`);
+	return m;
 }
 
 export function removeMarker(id: string): boolean {
-	const index = markers.findIndex(m => m.id === id);
-	if (index === -1) {
-		log.warn(`Marker not found: ${id}`);
-		return false;
-	}
-
-	const removed = markers.splice(index, 1)[0];
-	if (removed) log.info(`Removed marker: ${removed.label}`);
+	const i = markers.findIndex(m => m.id === id);
+	if (i === -1) return false;
+	markers.splice(i, 1);
+	log.info(`Del: ${id}`);
 	return true;
 }
 
-// eff: updates the primary video's playback head to the marker's timestamp
+// eff: updates playback head
 export function jumpToMarker(id: string): { jumped: boolean; time: number } {
-	const video = getPrimaryVideo();
-	const marker = markers.find(m => m.id === id);
+	const v = getPrimaryVideo();
+	const m = markers.find(mark => mark.id === id);
 
-	if (!video || !marker) {
-		log.warn(!video ? 'No video element found' : `Marker not found: ${id}`);
-		return { jumped: false, time: 0 };
-	}
+	if (!v || !m) { log.warn(!v ? 'No video' : 'No mark'); return { jumped: false, time: 0 }; }
 
-	video.currentTime = marker.time;
-	log.info(`Jumped to marker: ${marker.label} (${formatTime(marker.time)})`);
-	return { jumped: true, time: marker.time };
+	v.currentTime = m.time;
+	log.info(`Jump: ${m.label}`);
+	return { jumped: true, time: m.time };
 }
 
 export function listMarkers(): TimeMarker[] {

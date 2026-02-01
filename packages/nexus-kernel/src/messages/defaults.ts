@@ -11,7 +11,8 @@ export const DEFAULT_AUDIO_CONFIG: AudioConfig = {
   bass: false,
   eqValues: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   pan: 0,
-  delay: 0
+  delay: 0,
+  speed: 1.0
 };
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {

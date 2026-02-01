@@ -14,9 +14,9 @@
 		"./*": null
 	},
 	"scripts": {
-		"build": "tsc",
-		"dev": "tsc --watch",
-		"typecheck": "tsc --noEmit"
+		"build": "bun tsc",
+		"dev": "bun tsc --watch",
+		"typecheck": "bun tsc --noEmit"
 	},
 	"dependencies": {
 		"@nexus/contracts": "workspace:*",

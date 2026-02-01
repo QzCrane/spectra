@@ -65,12 +65,19 @@ export function scheduleCorsCheck(
 		if (timeoutTimer) clearTimeout(timeoutTimer);
 	};
 
+	// eff: scan frequency bin without allocation
+	const buffer = new Uint8Array(analyser.frequencyBinCount);
 	const hasAudioData = (): boolean => {
-		const data = new Uint8Array(analyser.frequencyBinCount);
-		analyser.getByteFrequencyData(data);
-		const sum = data.reduce((a, b) => a + b, 0);
-		if (sum > 0) corsLog.log(`📊 ${hostname}: Data detected (sum=${sum})`);
-		return sum > 0;
+		analyser.getByteFrequencyData(buffer);
+		// eff: simple O(N) scan, early exit if any signal found
+		if (!buffer) return false;
+		for (let i = 0, l = buffer.length; i < l; i++) {
+			if (buffer[i]! > 0) {
+				corsLog.log(`📊 ${hostname}: Data detected at bin ${i}`);
+				return true;
+			}
+		}
+		return false;
 	};
 
 	const startObserving = () => {

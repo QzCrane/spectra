@@ -3,32 +3,35 @@ import { logger } from '../../shared/logger';
 const log = logger.content;
 
 export type ElementState = {
-	volume: number;
-	muted: boolean;
-	settingByPlugin: boolean;
-	// guard: true if this element has processed at least one volumechange after initial setup
+	volume: number; muted: boolean; speed: number; settingByPlugin: boolean;
 	hasReceivedUserEvent: boolean;
 };
 
+// eff: WeakMap for O(1) state, WeakSet for O(1) existence
 const monitoredElements = new WeakSet<HTMLMediaElement>();
 const elementStates = new WeakMap<HTMLMediaElement, ElementState>();
 
+const getDefault = (m: HTMLMediaElement): ElementState => ({
+	volume: m.volume, muted: m.muted, speed: m.playbackRate, settingByPlugin: false, hasReceivedUserEvent: false
+});
+
 export function getElementState(media: HTMLMediaElement): ElementState {
-	return elementStates.get(media) || { volume: media.volume, muted: media.muted, settingByPlugin: false, hasReceivedUserEvent: false };
+	let s = elementStates.get(media);
+	if (!s) elementStates.set(media, s = getDefault(media));
+	return s;
 }
 
-export function setElementState(media: HTMLMediaElement, state: Partial<ElementState>): void {
-	const current = elementStates.get(media) || { volume: media.volume, muted: media.muted, settingByPlugin: false, hasReceivedUserEvent: false };
-	elementStates.set(media, { ...current, ...state });
+export function setElementState(media: HTMLMediaElement, p: Partial<ElementState>): void {
+	const s = getElementState(media);
+	if (p.volume !== undefined) s.volume = p.volume;
+	if (p.muted !== undefined) s.muted = p.muted;
+	if (p.speed !== undefined) s.speed = p.speed;
+	if (p.settingByPlugin !== undefined) s.settingByPlugin = p.settingByPlugin;
+	if (p.hasReceivedUserEvent !== undefined) s.hasReceivedUserEvent = p.hasReceivedUserEvent;
 }
 
-export function isMonitored(media: HTMLMediaElement): boolean {
-	return monitoredElements.has(media);
-}
-
-export function markMonitored(media: HTMLMediaElement): void {
-	monitoredElements.add(media);
-}
+export const isMonitored = (media: HTMLMediaElement) => monitoredElements.has(media);
+export const markMonitored = (media: HTMLMediaElement) => monitoredElements.add(media);
 
 export interface MonitorContext {
 	getUserInteracted: () => boolean;
@@ -36,72 +39,63 @@ export interface MonitorContext {
 	getTargetVolume: () => number;
 	getTargetMuted: () => boolean;
 	onNativeVolumeChange: (volume: number, muted: boolean) => void;
+	onNativeSpeedChange?: (speed: number) => void;
 }
 
 export function setupVolumeMonitor(media: HTMLMediaElement, ctx: MonitorContext): void {
-	if (!elementStates.has(media)) {
-		elementStates.set(media, { volume: media.volume, muted: media.muted, settingByPlugin: false, hasReceivedUserEvent: false });
-	}
+	getElementState(media); // Ensure init
 
-	media.addEventListener('volumechange', (event) => {
-		const state = elementStates.get(media)!;
-		if (state.settingByPlugin) return;
+	media.addEventListener('volumechange', (e) => {
+		const s = elementStates.get(media)!;
+		if (s.settingByPlugin) return;
 
-		// rule: if user hasn't interacted with plugin, ignore native volume changes entirely
-		// EXCEPTION: if the event is a trusted user interaction (e.g. manual slider drag), allow it
-		if (!ctx.getUserInteracted() && !event.isTrusted) return;
+		// rule: Ignore events unless untrusted or user interacted
+		if (!ctx.getUserInteracted() && !e.isTrusted) return;
 
-		const newVol = media.volume, newMuted = media.muted;
+		const nv = media.volume, nm = media.muted;
+		const diff = Math.abs(nv - ctx.getTargetVolume());
+		const diffMute = nm !== ctx.getTargetMuted();
 
-		// rule: precise diff detection to support smooth "Direct Take"
-		const targetVol = ctx.getTargetVolume();
-		const targetMuted = ctx.getTargetMuted();
-		const volDiff = Math.abs(newVol - targetVol);
-		const muteDiff = newMuted !== targetMuted;
-
-		// rule: Advanced Mode (WebAudio/Capture boost) still needs to sync native 0-100% changes
-		// note: in this mode, we compare against lastKnownVolume (element's own state), not targetVolume
+		// Advanced Mode (Sync native range only)
 		if (!ctx.isSyncEnabled()) {
-			// Detect implicit unmute: user dragged volume from 0 to non-zero
-			const implicitUnmute = state.muted && !newMuted && newVol > 0;
-
-			if (newMuted !== state.muted || implicitUnmute) {
-				log.debug(`[DOM] Advanced Mode Mute: ${newMuted} (implicit=${implicitUnmute})`);
-				ctx.onNativeVolumeChange(-1, newMuted);
+			// Implicit unmute
+			if (s.muted && !nm && nv > 0) {
+				log.debug(`[DOM] Adv Unmute`);
+				ctx.onNativeVolumeChange(-1, nm);
+			} else if (Math.abs(nv - s.volume) > 0.005) {
+				log.debug(`[DOM] Adv Vol: ${(nv * 100) | 0}%`);
+				ctx.onNativeVolumeChange(nv, nm);
 			}
-
-			// rule: sync volume changes within 0-100% range even in Advanced Mode
-			// epsilon: 0.005 to capture discrete steps on native sliders (often 0.01)
-			const volChanged = Math.abs(newVol - state.volume) > 0.005;
-			if (volChanged) {
-				log.debug(`[DOM] Advanced Mode Volume: ${(newVol * 100).toFixed(0)}%`);
-				ctx.onNativeVolumeChange(newVol, newMuted);
-			}
-
-			elementStates.set(media, { ...state, volume: newVol, muted: newMuted });
+			s.volume = nv; s.muted = nm;
 			return;
 		}
 
-		// rule: NATIVE_LITE sync with stricter mute protection
-		// theory: first volumechange after element setup is often page-init (default muted videos)
-		// mute sync requires: 1) user interacted with plugin, OR 2) element already received a user-initiated change
-		// this prevents sites like bilibili (default-muted) from hijacking plugin state on page load
-		const allowMuteSync = ctx.getUserInteracted() || state.hasReceivedUserEvent;
+		// Sync Mode
+		const allowMute = ctx.getUserInteracted() || s.hasReceivedUserEvent;
 
-		if (volDiff > 0.005) {
-			log.debug(`[DOM] Native Volume: ${(newVol * 100).toFixed(0)}%`);
-			// rule: sync volume, but preserve plugin's mute state if mute sync is blocked
-			const mutedToSync = allowMuteSync ? newMuted : targetMuted;
-			ctx.onNativeVolumeChange(newVol, mutedToSync);
-			// note: after a volume change from user, future mute syncs are allowed for this element
-			elementStates.set(media, { ...state, volume: newVol, muted: newMuted, hasReceivedUserEvent: true });
-		} else if (muteDiff && allowMuteSync) {
-			log.debug(`[DOM] Native Mute: ${newMuted}`);
-			ctx.onNativeVolumeChange(-1, newMuted);
-			elementStates.set(media, { ...state, volume: newVol, muted: newMuted, hasReceivedUserEvent: true });
+		if (diff > 0.005) {
+			log.debug(`[DOM] Vol: ${(nv * 100) | 0}%`);
+			ctx.onNativeVolumeChange(nv, allowMute ? nm : ctx.getTargetMuted());
+			s.volume = nv; s.muted = nm; s.hasReceivedUserEvent = true;
+		} else if (diffMute && allowMute) {
+			log.debug(`[DOM] Mute: ${nm}`);
+			ctx.onNativeVolumeChange(-1, nm);
+			s.volume = nv; s.muted = nm; s.hasReceivedUserEvent = true;
 		} else {
-			// note: update local state without triggering sync
-			elementStates.set(media, { ...state, volume: newVol, muted: newMuted });
+			s.volume = nv; s.muted = nm;
+		}
+	});
+
+	media.addEventListener('ratechange', (e) => {
+		const s = elementStates.get(media)!;
+		if (s.settingByPlugin) return;
+
+		// note: speed changes are almost always user or script initiated (no browser default like mute)
+		const ns = media.playbackRate;
+		if (Math.abs(ns - s.speed) > 0.005) {
+			log.debug(`[DOM] Rate: ${ns}`);
+			ctx.onNativeSpeedChange?.(ns);
+			s.speed = ns;
 		}
 	});
 }

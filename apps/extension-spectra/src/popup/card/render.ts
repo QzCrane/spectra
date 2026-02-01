@@ -68,6 +68,13 @@ export function createRenderFn(params: RenderParams): () => void {
     if (ui.bass) ui.bass.checked = config.bass;
     if (ui.mono) ui.mono.checked = config.mono;
 
+    if (ui.speedInput) {
+      // rule: only update speed input if not focused to avoid interfering with user typing
+      if (document.activeElement !== ui.speedInput) {
+        ui.speedInput.value = (config.speed || 1.0).toFixed(2);
+      }
+    }
+
     ui.eqInputs.forEach((inp, i) => {
       // rule: skip input value updates if the element is focused to prevent "cursor jumping" during user interaction
       if (document.activeElement !== inp) {

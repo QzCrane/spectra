@@ -8,7 +8,7 @@ const PAUSE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="current
 const PLAY_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 
 // eff: attaches click and input handlers to playback buttons, speed controls, and tab-focus utilities
-export function bindMediaControls(ui: CardUIElements, tabId: number): void {
+export function bindMediaControls(ui: CardUIElements, tabId: number, onSpeedChange?: (speed: number) => void): void {
 	if (ui.btnPause) {
 		ui.btnPause.onclick = async () => {
 			const res = await sendToTab<{ playing: boolean }>(tabId, 'MEDIA_TOGGLE_PLAY', {});
@@ -32,10 +32,13 @@ export function bindMediaControls(ui: CardUIElements, tabId: number): void {
 			const delta = parseFloat(btn.dataset.delta || '0');
 			const stateRes = await sendToTab<{ speed: number }>(tabId, 'MEDIA_GET_STATE', {});
 			const currentSpeed = stateRes?.speed ?? 1;
-			const newSpeed = Math.max(0.1, Math.min(16, currentSpeed + delta));
+			// note: fix floating point precision errors (e.g. 1.1 + 0.1 = 1.2000000000000002)
+			const rawSpeed = currentSpeed + delta;
+			const newSpeed = Math.max(0.1, Math.min(16, Math.round(rawSpeed * 100) / 100));
 			const res = await sendToTab<{ speed: number }>(tabId, 'MEDIA_SET_SPEED', { speed: newSpeed });
 			if (res && ui.speedInput) {
 				ui.speedInput.value = res.speed.toFixed(2);
+				onSpeedChange?.(res.speed);
 			}
 		};
 	});
@@ -49,6 +52,7 @@ export function bindMediaControls(ui: CardUIElements, tabId: number): void {
 				if (ui.speedInput) ui.speedInput.value = finalSpeed.toFixed(2);
 				// note: ensure the global side panel speed control stays in sync with individual card adjustments
 				syncSidePanelSpeed(finalSpeed);
+				onSpeedChange?.(finalSpeed);
 			}
 		};
 

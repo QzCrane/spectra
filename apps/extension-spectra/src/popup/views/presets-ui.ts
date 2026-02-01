@@ -18,6 +18,13 @@ export function initPresetsUI(): void {
 		clearBtn.onclick = handleClearAll;
 	}
 
+	// eff: auto-refresh list when storage changes (e.g. user saves a new preset from the main card view)
+	chrome.storage.onChanged.addListener((changes, area) => {
+		if (area === 'local' && changes.siteSettings) {
+			refreshPresetsList();
+		}
+	});
+
 	refreshPresetsList();
 }
 
@@ -60,7 +67,12 @@ function createPresetItem(domain: string, config: Partial<AudioConfig>): HTMLEle
 
 	const volumeEl = document.createElement('span');
 	volumeEl.className = 'preset-volume';
-	volumeEl.textContent = config.volume !== undefined ? `${config.volume}%` : '—';
+	// rule: always display speed, defaulting to 1x if undefined, to maintain UI consistency
+	const rawSpeed = config.speed !== undefined ? config.speed : 1.0;
+	const cleanSpeed = parseFloat(rawSpeed.toFixed(2));
+	const speedDisplay = ` | ${cleanSpeed}x`;
+
+	volumeEl.textContent = config.volume !== undefined ? `${config.volume}%${speedDisplay}` : '—';
 
 	const deleteBtn = document.createElement('button');
 	deleteBtn.className = 'btn-preset-delete';

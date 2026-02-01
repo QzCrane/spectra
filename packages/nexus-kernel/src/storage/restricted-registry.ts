@@ -7,11 +7,11 @@ const KEY = 'restrictedRegistry';
 
 // eff: migrates legacy string[] format to DomainEntry[]
 function migrateOldFormat(rawData: unknown): DomainEntry[] {
-	if (!rawData) return [];
-	if (Array.isArray(rawData) && rawData.length > 0 && typeof rawData[0] === 'object') {
-		return rawData as DomainEntry[];
-	}
-	if (Array.isArray(rawData) && rawData.every(d => typeof d === 'string')) {
+	if (!Array.isArray(rawData) || !rawData.length) return [];
+	if (typeof rawData[0] === 'object') return rawData as DomainEntry[];
+
+	// eff: legacy string array conversion with O(n) scan
+	if (typeof rawData[0] === 'string') {
 		const now = Date.now();
 		return (rawData as string[]).map((domain, i) => ({
 			domain, source: 'user' as DomainSource, probed: false, addedAt: now - i,

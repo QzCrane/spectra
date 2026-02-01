@@ -1,156 +1,122 @@
 /**
  * SPECTRA Content Script - Visual Filters
- *
- * Responsibility: Video brightness, contrast, saturation, grayscale, invert using CSS filters
+ * Responsibility: Video brightness, contrast, saturation, grayscale using CSS filters
  */
 
 import { createLogger } from '../shared/logger';
 
 const log = createLogger('VideoFilter');
 
-// ============================================
-// Filter State
-// ============================================
-
 interface FilterState {
-	brightness: number; // 0-200, 100=default
-	contrast: number;   // 0-200, 100=default
-	saturate: number;   // 0-200, 100=default
-	grayscale: boolean;
-	invert: boolean;
+	brightness: number; contrast: number; saturate: number;
+	grayscale: boolean; invert: boolean;
 }
 
-/** Per-video filter state */
-const filterState = new WeakMap<HTMLVideoElement, FilterState>();
-
 const DEFAULT_FILTER: FilterState = {
-	brightness: 100,
-	contrast: 100,
-	saturate: 100,
-	grayscale: false,
-	invert: false
+	brightness: 100, contrast: 100, saturate: 100,
+	grayscale: false, invert: false
 };
+
+// eff: WeakMap for O(1) state
+const filterState = new WeakMap<HTMLVideoElement, FilterState>();
 
 function getState(video: HTMLVideoElement): FilterState {
 	let state = filterState.get(video);
 	if (!state) {
-		state = { ...DEFAULT_FILTER };
-		filterState.set(video, state);
+		filterState.set(video, state = { ...DEFAULT_FILTER });
 	}
 	return state;
 }
 
+// eff: O(N) Zero-Alloc
 function getPrimaryVideo(): HTMLVideoElement | null {
-	const videos = Array.from(document.querySelectorAll('video'));
-	if (!videos.length) return null;
+	const videos = document.getElementsByTagName('video');
+	let best: HTMLVideoElement | null = null;
+	let maxArea = 0;
 
-	const visible = videos.filter(v => {
+	for (let i = 0, len = videos.length; i < len; i++) {
+		const v = videos[i];
+		if (!v) continue;
 		const rect = v.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
-	});
-
-	if (!visible.length) return videos[0] ?? null;
-
-	visible.sort((a, b) => {
-		const aRect = a.getBoundingClientRect();
-		const bRect = b.getBoundingClientRect();
-		return (bRect.width * bRect.height) - (aRect.width * aRect.height);
-	});
-
-	return visible[0] ?? null;
-}
-
-// ============================================
-// Filter Operations
-// ============================================
-
-/** Apply CSS filter */
-function applyFilter(video: HTMLVideoElement): void {
-	const state = getState(video);
-	const filters: string[] = [];
-
-	if (state.brightness !== 100) filters.push(`brightness(${state.brightness}%)`);
-	if (state.contrast !== 100) filters.push(`contrast(${state.contrast}%)`);
-	if (state.saturate !== 100) filters.push(`saturate(${state.saturate}%)`);
-	if (state.grayscale) filters.push('grayscale(100%)');
-	if (state.invert) filters.push('invert(100%)');
-
-	video.style.filter = filters.length ? filters.join(' ') : 'none';
-	log.info(`Filter applied: ${filters.join(' ') || 'none'}`);
-}
-
-/** Set Filter (partial update) */
-export function setVideoFilter(params: Partial<FilterState>): boolean {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return false;
+		const area = rect.width * rect.height;
+		if (area > maxArea) {
+			maxArea = area;
+			best = v;
+		}
 	}
+	return best || videos[0] || null;
+}
 
-	const state = getState(video);
-	if (params.brightness !== undefined) state.brightness = Math.max(0, Math.min(200, params.brightness));
-	if (params.contrast !== undefined) state.contrast = Math.max(0, Math.min(200, params.contrast));
-	if (params.saturate !== undefined) state.saturate = Math.max(0, Math.min(200, params.saturate));
-	if (params.grayscale !== undefined) state.grayscale = params.grayscale;
-	if (params.invert !== undefined) state.invert = params.invert;
+function applyFilter(video: HTMLVideoElement): void {
+	const s = getState(video);
+	let css = '';
+	if (s.brightness !== 100) css += `brightness(${s.brightness}%) `;
+	if (s.contrast !== 100) css += `contrast(${s.contrast}%) `;
+	if (s.saturate !== 100) css += `saturate(${s.saturate}%) `;
+	if (s.grayscale) css += 'grayscale(100%) ';
+	if (s.invert) css += 'invert(100%)';
+
+	video.style.filter = css || 'none';
+	log.info(`Filter: ${css || 'none'}`);
+}
+
+const clamp = (v: number) => v < 0 ? 0 : v > 200 ? 200 : v;
+
+export function setVideoFilter(p: Partial<FilterState>): boolean {
+	const video = getPrimaryVideo();
+	if (!video) return false;
+
+	const s = getState(video);
+	if (p.brightness !== undefined) s.brightness = clamp(p.brightness);
+	if (p.contrast !== undefined) s.contrast = clamp(p.contrast);
+	if (p.saturate !== undefined) s.saturate = clamp(p.saturate);
+	if (p.grayscale !== undefined) s.grayscale = p.grayscale;
+	if (p.invert !== undefined) s.invert = p.invert;
 
 	applyFilter(video);
 	return true;
 }
 
-/** Reset Filter */
 export function resetVideoFilter(): boolean {
 	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return false;
-	}
-
+	if (!video) return false;
 	filterState.set(video, { ...DEFAULT_FILTER });
 	applyFilter(video);
 	return true;
 }
 
-// ============================================
-// Dim Background
-// ============================================
-
-const DIM_OVERLAY_ID = 'spectra-dim-overlay';
+// Dim Background State
+const DIM_ID = 'spectra-dim-overlay';
 let dimState = { active: false, opacity: 0.7 };
 
-/** Toggle Dim Background */
-export function toggleDimBackground(params?: { enabled?: boolean; opacity?: number }): { active: boolean; opacity: number } {
+export function toggleDimBackground(p?: { enabled?: boolean; opacity?: number }): typeof dimState {
 	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return dimState;
-	}
+	if (!video) return dimState;
 
-	// Update state
-	if (params?.enabled !== undefined) dimState.active = params.enabled;
+	if (p?.enabled !== undefined) dimState.active = p.enabled;
 	else dimState.active = !dimState.active;
-	if (params?.opacity !== undefined) dimState.opacity = Math.max(0, Math.min(1, params.opacity));
 
-	let overlay = document.getElementById(DIM_OVERLAY_ID);
+	if (p?.opacity !== undefined) dimState.opacity = p.opacity < 0 ? 0 : p.opacity > 1 ? 1 : p.opacity;
+
+	let overlay = document.getElementById(DIM_ID);
 
 	if (dimState.active) {
 		if (!overlay) {
 			overlay = document.createElement('div');
-			overlay.id = DIM_OVERLAY_ID;
-			overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;background:#000;';
+			overlay.id = DIM_ID;
+			overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;background:#000';
 			document.body.appendChild(overlay);
 		}
 		overlay.style.opacity = String(dimState.opacity);
-		// Promote video z-index
 		video.style.position = 'relative';
 		video.style.zIndex = '2147483647';
-		log.info(`Dim background: ON (opacity=${dimState.opacity})`);
 	} else {
-		if (overlay) overlay.remove();
+		overlay?.remove();
 		video.style.zIndex = '';
-		log.info('Dim background: OFF');
+		video.style.position = '';
 	}
 
+	log.info(`Dim: ${dimState.active} (${dimState.opacity})`);
 	return dimState;
 }
 

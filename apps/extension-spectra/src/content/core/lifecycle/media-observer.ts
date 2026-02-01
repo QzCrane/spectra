@@ -33,21 +33,18 @@ export function createMediaObserver(
 		subtree: true,
 	});
 
-	// eff: immediate capture of media playback events to handle short-lived audio (e.g. Google Translate)
-	// rule: bypasses the 500ms observer debounce to attach WebAudio nodes before the clip finishes
-	const immediateAttachHandler = (event: Event) => {
-		const target = event.target as HTMLMediaElement;
-		if (target.nodeName !== 'AUDIO' && target.nodeName !== 'VIDEO') return;
+	// eff: immediate capture of media playback events to handle short-lived audio
+	const immediateAttachHandler = (e: Event) => {
+		const t = e.target as HTMLElement;
+		const n = t.nodeName;
+		if (n !== 'AUDIO' && n !== 'VIDEO') return;
 
-		console.log('[SPECTRA-OBSERVER] Play/Loaded event detected:', target);
+		// console.log('[SPECTRA-OBSERVER] Play/Loaded:', t);
 
 		if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) {
-			if (audioController.attachNode(target)) {
-				console.log('[SPECTRA-OBSERVER] Immediate attach SUCCESS');
-				// note: must apply current volume config immediately, otherwise short clips play at 100% until next cycle
+			if (audioController.attachNode(t as HTMLMediaElement)) {
+				// note: must apply current volume config immediately
 				audioController.updateParams(state.config);
-			} else {
-				console.log('[SPECTRA-OBSERVER] Immediate attach FAILED (Already attached or CORS?)');
 			}
 		}
 	};
@@ -63,9 +60,7 @@ export function createMediaObserver(
 	};
 }
 
-// inv: returns true if at least one <audio> or <video> element exists in the current document
+// inv: returns true if at least one <audio> or <video> element exists
 export function hasMediaElements(): boolean {
-	const audioCount = document.querySelectorAll('audio').length;
-	const videoCount = document.querySelectorAll('video').length;
-	return audioCount > 0 || videoCount > 0;
+	return document.getElementsByTagName('video').length > 0 || document.getElementsByTagName('audio').length > 0;
 }

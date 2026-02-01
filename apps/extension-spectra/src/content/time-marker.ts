@@ -1,92 +1,70 @@
-// goal: manages transient in-page time markers for quick navigation within video elements
+// goal: manages transient in-page time markers for quick navigation
 
 import { createLogger } from '../shared/logger';
 
 const log = createLogger('Marker');
 
-interface TimeMarker {
-	id: string;
-	time: number;
-	label: string;
-}
-
-// markers: volatile list of user-defined timestamps; reset on page reload
+interface TimeMarker { id: string; time: number; label: string; }
 const markers: TimeMarker[] = [];
 
-function generateId(): string {
-	return `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+// eff: Fast ID generation
+const generateId = () => `m_${Date.now().toString(36)}_${(Math.random() * 1e9 | 0).toString(36)}`;
+
+// eff: Bitwise truncation for integer math
+function formatTime(sec: number): string {
+	const m = (sec / 60) | 0;
+	const s = (sec % 60) | 0;
+	return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-function formatTime(seconds: number): string {
-	const m = Math.floor(seconds / 60);
-	const s = Math.floor(seconds % 60);
-	return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-// post: returns the largest visible video element on the page, or the first available video as fallback
+// eff: O(N) Zero-Alloc
 function getPrimaryVideo(): HTMLVideoElement | null {
-	const videos = Array.from(document.querySelectorAll('video'));
-	if (!videos.length) return null;
-	const visible = videos.filter(v => {
+	const videos = document.getElementsByTagName('video');
+	let best: HTMLVideoElement | null = null;
+	let maxArea = 0;
+
+	for (let i = 0, len = videos.length; i < len; i++) {
+		const v = videos[i];
+		if (!v) continue;
 		const rect = v.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
-	});
-	if (!visible.length) return videos[0] ?? null;
-	visible.sort((a, b) => {
-		const aRect = a.getBoundingClientRect();
-		const bRect = b.getBoundingClientRect();
-		return (bRect.width * bRect.height) - (aRect.width * aRect.height);
-	});
-	return visible[0] ?? null;
+		const area = rect.width * rect.height;
+		if (area > maxArea) {
+			maxArea = area;
+			best = v;
+		}
+	}
+	return best || videos[0] || null;
 }
 
-// eff: captures the current timestamp of the primary video and creates a labeled marker
 export function addMarker(label?: string): TimeMarker | null {
 	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return null;
-	}
+	if (!video) return null;
 
 	const time = video.currentTime;
-	const defaultLabel = label || `Mark @ ${formatTime(time)}`;
-	const marker: TimeMarker = {
-		id: generateId(),
-		time,
-		label: defaultLabel
-	};
+	const marker: TimeMarker = { id: generateId(), time, label: label || `Mark @ ${formatTime(time)}` };
 
 	markers.push(marker);
-	// rule: markers are always kept chronologically sorted for UI consistency
 	markers.sort((a, b) => a.time - b.time);
-	log.info(`Added marker: ${marker.label} at ${formatTime(time)}`);
+
+	log.info(`Added: ${marker.label}`);
 	return marker;
 }
 
 export function removeMarker(id: string): boolean {
-	const index = markers.findIndex(m => m.id === id);
-	if (index === -1) {
-		log.warn(`Marker not found: ${id}`);
-		return false;
-	}
-
-	const removed = markers.splice(index, 1)[0];
-	if (removed) log.info(`Removed marker: ${removed.label}`);
+	const i = markers.findIndex(m => m.id === id);
+	if (i === -1) return false;
+	markers.splice(i, 1);
 	return true;
 }
 
-// eff: updates the primary video's playback head to the marker's timestamp
 export function jumpToMarker(id: string): { jumped: boolean; time: number } {
 	const video = getPrimaryVideo();
 	const marker = markers.find(m => m.id === id);
 
-	if (!video || !marker) {
-		log.warn(!video ? 'No video element found' : `Marker not found: ${id}`);
-		return { jumped: false, time: 0 };
-	}
+	if (!video || !marker) return { jumped: false, time: 0 };
 
 	video.currentTime = marker.time;
-	log.info(`Jumped to marker: ${marker.label} (${formatTime(marker.time)})`);
+	log.info(`Jumped to: ${marker.label}`);
 	return { jumped: true, time: marker.time };
 }
 

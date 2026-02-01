@@ -23,15 +23,16 @@ export const LOG_COLORS = {
 
 // eff: creates a colored logger for browser contexts (Popup/Content)
 export function createLogger(tag: string, product: NexusProduct = 'NEXUS'): Logger {
-	const fullPrefix = `[${product}] [${tag}]`;
+	const p = `[${product}] [${tag}]`;
+	const f = (m: string, c: string, ...a: unknown[]) => console.log(`%c${p}${m ? ' ' + m : ''}`, c, ...a);
 
 	return {
-		log: (...args: unknown[]) => console.log(`%c${fullPrefix}`, LOG_COLORS.log, ...args),
-		info: (...args: unknown[]) => console.info(`%c${fullPrefix}`, LOG_COLORS.info, ...args),
-		warn: (...args: unknown[]) => console.warn(`%c${fullPrefix}`, LOG_COLORS.warn, ...args),
-		error: (...args: unknown[]) => console.error(`%c${fullPrefix}`, LOG_COLORS.error, ...args),
-		debug: (...args: unknown[]) => console.debug(`%c${fullPrefix}`, LOG_COLORS.debug, ...args),
-		capture: (...args: unknown[]) => console.log(`%c${fullPrefix} [CAPTURE]`, LOG_COLORS.capture, ...args),
+		log: (...a) => console.log(`%c${p}`, LOG_COLORS.log, ...a),
+		info: (...a) => console.info(`%c${p}`, LOG_COLORS.info, ...a),
+		warn: (...a) => console.warn(`%c${p}`, LOG_COLORS.warn, ...a),
+		error: (...a) => console.error(`%c${p}`, LOG_COLORS.error, ...a),
+		debug: (...a) => console.debug(`%c${p}`, LOG_COLORS.debug, ...a),
+		capture: (...a) => f('[CAPTURE]', LOG_COLORS.capture, ...a),
 	};
 }
 

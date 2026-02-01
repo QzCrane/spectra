@@ -16,6 +16,8 @@ export interface AudioConfig {
   pan: number;
   // inv: -500ms to +500ms, positive means audio delay
   delay: number;
+  // inv: 0.1 to 16.0, default 1.0
+  speed: number;
 }
 
 export const DEFAULT_AUDIO_CONFIG: Readonly<AudioConfig> = {
@@ -27,7 +29,8 @@ export const DEFAULT_AUDIO_CONFIG: Readonly<AudioConfig> = {
   bass: false,
   eqValues: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   pan: 0,
-  delay: 0
+  delay: 0,
+  speed: 1.0
 } as const;
 
 // Types of audio processing engines

@@ -6,6 +6,7 @@ import { Actions } from '@nexus/contracts';
 import { safeSend } from '../../core/context-guard';
 import type { PolicyExecutorDeps, PolicyExecutorState } from '../../types';
 import type { InternalState } from './types';
+import { createBadgePayload, getBadgeStateHash } from '../../../shared/badge-logic';
 
 // note: kept for legacy compatibility, prefer predictCapture for mode-based logic
 export function isEffectivelyCapturing(
@@ -34,17 +35,14 @@ export function updateBadge(
 	// note: isPredictedCapture alone does NOT trigger badge - user must actively adjust parameters
 	// note: volume > 100% implies the user intentionally used the plugin's boost feature
 
-	const hash = `${state.config.volume}_${state.config.muted || false}_${isPredictedCapture}_${state.userHasInteracted}`;
+	const payload = createBadgePayload(state.config, isPredictedCapture, state.userHasInteracted);
+	const hash = getBadgeStateHash(payload);
+
 	if (hash === internalState.lastBadgeHash) return;
 	internalState.lastBadgeHash = hash;
 
 	// note: BADGE_UPDATE is handled by background worker (badge.ts)
-	safeSend(() => messenger.send('BADGE_UPDATE', {
-		volume: state.config.volume,
-		muted: state.config.muted,
-		isCapture: isPredictedCapture,
-		userInteracted: state.userHasInteracted,
-	} as any)).catch(() => { });
+	safeSend(() => messenger.send('BADGE_UPDATE', payload as any)).catch(() => { });
 }
 
 // goal: broadcasts current configuration to open popup windows to ensure UI consistency

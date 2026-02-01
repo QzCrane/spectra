@@ -1,4 +1,4 @@
-// goal: manages global extension settings within the content script context and ensures synchronization with the background worker
+// goal: manages global extension settings within the content script context
 
 import type { NexusMessenger } from '@nexus/kernel';
 import { Actions } from '@nexus/contracts';
@@ -16,39 +16,27 @@ export const DEFAULT_CONTENT_SETTINGS: ContentGlobalSettings = {
 	lang: 'en-US',
 };
 
-// post: returns a settings manager instance with load and message handling capabilities
+// eff: Singleton-like pattern for content script
 export function createSettingsManager(messenger: NexusMessenger) {
 	let settings: ContentGlobalSettings = { ...DEFAULT_CONTENT_SETTINGS };
 
 	return {
-		get(): ContentGlobalSettings {
-			return settings;
-		},
+		get: () => settings,
+		update: (p: Partial<ContentGlobalSettings>) => { settings = { ...settings, ...p }; },
 
-		update(partial: Partial<ContentGlobalSettings>): void {
-			settings = { ...settings, ...partial };
-		},
-
-		// eff: fetches initial settings from the background; assumes default if context is invalidated
-		async load(): Promise<void> {
+		load: async () => {
 			if (!isExtensionContextValid()) return;
-
 			const loaded = await safeSend(() => messenger.send('SETTINGS_GET'));
-			if (loaded) {
-				settings = { ...settings, ...loaded };
-			}
+			if (loaded) settings = { ...settings, ...loaded };
 		},
 
-		// goal: intercepts GLOBAL_SETTINGS_UPDATE broadcasts to update the local cache in real-time
-		handleMessage(message: { action?: string; settings?: Partial<ContentGlobalSettings> }): boolean {
-			if (message.action === Actions.GLOBAL_SETTINGS_UPDATE) {
-				if (message.settings) {
-					settings = { ...settings, ...message.settings };
-				}
+		handleMessage: (msg: { action?: string; settings?: Partial<ContentGlobalSettings> }) => {
+			if (msg.action === Actions.GLOBAL_SETTINGS_UPDATE && msg.settings) {
+				settings = { ...settings, ...msg.settings };
 				return true;
 			}
 			return false;
-		},
+		}
 	};
 }
 

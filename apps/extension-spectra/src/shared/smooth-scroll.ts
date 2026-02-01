@@ -22,64 +22,52 @@ interface EngineState {
 }
 
 const engine: EngineState = {
-	que: [],
-	pending: null,
-	target: null,
-	direction: { x: 0, y: 0 },
-	animationTime: 300, // shorter for responsive feel (was 400)
-	easing: (t) => 1 - Math.pow(1 - t, 4), // ease-out-quart
+	que: [], pending: null, target: null, direction: { x: 0, y: 0 },
+	animationTime: 300, easing: (t) => 1 - Math.pow(1 - t, 4)
 };
 
 function directionCheck(x: number, y: number): void {
-	const dirX = x > 0 ? 1 : -1;
-	const dirY = y > 0 ? 1 : -1;
-	if (engine.direction.x !== dirX || engine.direction.y !== dirY) {
-		engine.direction.x = dirX;
-		engine.direction.y = dirY;
-		engine.que = [];
-		if (engine.pending) {
-			cancelAnimationFrame(engine.pending);
-			engine.pending = null;
-		}
+	const dx = x > 0 ? 1 : -1;
+	const dy = y > 0 ? 1 : -1;
+	if (engine.direction.x !== dx || engine.direction.y !== dy) {
+		engine.direction.x = dx; engine.direction.y = dy;
+		engine.que.length = 0; // eff: clear without alloc
+		if (engine.pending) { cancelAnimationFrame(engine.pending); engine.pending = null; }
 	}
 }
 
 function scrollStep(): void {
-	const target = engine.target;
-	if (!target) return;
+	const tgt = engine.target as HTMLElement;
+	if (!tgt) return;
 
 	const now = Date.now();
-	let scrollY = 0;
+	let sy = 0;
+	let active = 0;
 
 	for (let i = 0; i < engine.que.length; i++) {
 		const item = engine.que[i];
 		if (!item) continue;
 
-		const elapsed = now - item.start;
-		const finished = elapsed >= engine.animationTime;
-
-		const rawPos = finished ? 1 : elapsed / engine.animationTime;
-		const pos = engine.easing(rawPos);
-
+		const elap = now - item.start;
+		const fin = elap >= engine.animationTime;
+		const pos = engine.easing(fin ? 1 : elap / engine.animationTime);
 		const y = ((item.y * pos - item.lastY) | 0);
-		scrollY += y;
+
+		sy += y;
 		item.lastY += y;
 
-		if (finished) {
-			engine.que.splice(i, 1);
-			i--;
+		if (!fin) {
+			// eff: compact array in-place
+			if (i !== active) engine.que[active] = item;
+			active++;
 		}
 	}
+	engine.que.length = active; // eff: trim
 
-	if (scrollY) {
-		(target as HTMLElement).scrollTop += scrollY;
-	}
+	if (sy) tgt.scrollTop += sy;
 
-	if (engine.que.length) {
-		engine.pending = requestAnimationFrame(scrollStep);
-	} else {
-		engine.pending = null;
-	}
+	if (engine.que.length) engine.pending = requestAnimationFrame(scrollStep);
+	else engine.pending = null;
 }
 
 function scrollTo(target: Element, deltaY: number): void {

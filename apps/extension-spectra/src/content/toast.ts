@@ -1,53 +1,41 @@
-// goal: provides transient visual notifications for background processes (e.g. auto-registry additions)
+// goal: transient notifications
 
-interface ToastState {
-	container: ShadowRoot | null;
-	timer: ReturnType<typeof setTimeout> | null;
-}
+interface ToastState { root: ShadowRoot | null; timer: ReturnType<typeof setTimeout> | null; }
+const state: ToastState = { root: null, timer: null };
 
-const state: ToastState = {
-	container: null,
-	timer: null,
-};
-
-// eff: displays a toast message for 3 seconds; re-uses existing shadow host if available
-export function showToast(message: string): void {
+export function showToast(msg: string): void {
 	if (!document.body) return;
 
-	if (!state.container) createToast();
-	if (!state.container) return;
+	if (!state.root) {
+		const host = document.createElement('div');
+		host.id = 'spectra-toast-host';
+		host.style.cssText = 'position:fixed;top:20%;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
+		document.body.appendChild(host);
 
-	const toast = state.container.getElementById('toast');
-	const text = state.container.getElementById('toast-text');
+		const ws = host.attachShadow({ mode: 'open' });
+		const style = document.createElement('style');
+		style.textContent = '.t{background:rgba(20,20,30,0.92);backdrop-filter:blur(10px);padding:14px 24px;border-radius:14px;color:#fff;font-family:system-ui;transition:0.3s;opacity:0;transform:translateY(-15px);display:flex;align-items:center;box-shadow:0 8px 32px rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1)}.v{opacity:1;transform:translateY(0)}.txt{font-size:14px;font-weight:500;white-space:nowrap}';
 
+		const div = document.createElement('div');
+		div.className = 't';
+		div.id = 't';
+
+		const span = document.createElement('span');
+		span.className = 'txt';
+		span.id = 'txt';
+
+		div.appendChild(span);
+		ws.append(style, div);
+		state.root = ws;
+	}
+
+	const toast = state.root.getElementById('t');
+	const text = state.root.getElementById('txt');
 	if (!toast || !text) return;
 
-	text.innerText = message;
-	toast.classList.add('visible');
+	text.textContent = msg;
+	toast.classList.add('v');
 
 	if (state.timer) clearTimeout(state.timer);
-	state.timer = setTimeout(() => toast.classList.remove('visible'), 3000);
-}
-
-// goal: injects a shadow DOM host into the page to prevent host site CSS from polluting toast styles
-function createToast(): void {
-	if (!document.body) return;
-
-	const host = document.createElement('div');
-	host.id = 'spectra-toast-host';
-	host.style.cssText = 'position: fixed; top: 20%; left: 50%; transform: translateX(-50%); z-index: 2147483647; pointer-events: none;';
-	document.body.appendChild(host);
-
-	const shadow = host.attachShadow({ mode: 'open' });
-	shadow.innerHTML = `
-    <style>
-      .toast { background: rgba(20,20,30,0.92); backdrop-filter: blur(10px); padding: 14px 24px; border-radius: 14px; color: white; font-family: system-ui, sans-serif; transition: opacity 0.3s, transform 0.3s; opacity: 0; transform: translateY(-15px); display: flex; align-items: center; gap: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); }
-      .toast.visible { opacity: 1; transform: translateY(0); }
-      .toast-text { font-size: 14px; font-weight: 500; white-space: nowrap; }
-    </style>
-    <div class="toast" id="toast">
-      <span class="toast-text" id="toast-text"></span>
-    </div>
-  `;
-	state.container = shadow;
+	state.timer = setTimeout(() => toast.classList.remove('v'), 3000);
 }

@@ -22,9 +22,9 @@
 		"./*": null
 	},
 	"scripts": {
-		"build": "tsc -b",
-		"dev": "tsc -b --watch",
-		"typecheck": "tsc --noEmit"
+		"build": "bun tsc -b",
+		"dev": "bun tsc -b --watch",
+		"typecheck": "bun tsc --noEmit"
 	},
 	"dependencies": {
 		"@nexus/contracts": "workspace:*"

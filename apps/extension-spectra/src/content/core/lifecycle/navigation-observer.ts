@@ -1,5 +1,5 @@
-// goal: detects Single Page Application (SPA) route changes to refresh site-specific configurations and re-probe CORS status
-// note: native popstate doesn't trigger on pushState/replaceState, so monkeypatching the History API is necessary
+// goal: detects SPA route changes to refresh site-specific configs
+// note: monkeypatching History API for pushState/replaceState
 
 import { isExtensionContextValid } from '../context-guard';
 import type { PolicyExecutor } from '../../logic/policy-executor';
@@ -9,55 +9,48 @@ interface NavigationObserverDeps {
 	onNavigate: () => void;
 }
 
-// eff: initializes listeners and patches the window.history object to monitor URL transitions
-// post: returns a cleanup function to restore original history methods and remove listeners
+// eff: single timer instance properly cleared
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let lastPath = '';
+
 export function createNavigationObserver(deps: NavigationObserverDeps): () => void {
 	const { policyExecutor, onNavigate } = deps;
+	lastPath = window.location.pathname;
 
-	let lastPathname = window.location.pathname;
-	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-	// eff: evaluates if the URL path has materially changed and triggers a debounced re-probing of the audio policy
-	const handleNavigation = () => {
+	const handleNav = () => {
 		if (!isExtensionContextValid()) return;
+		const cur = window.location.pathname;
+		if (cur === lastPath) return; // Ignore hash/query
 
-		const currentPathname = window.location.pathname;
-
-		// rule: ignore hash or query parameter changes to prevent redundant processing on purely client-side UI state shifts
-		if (currentPathname === lastPathname) return;
-
-		lastPathname = currentPathname;
-
-		// rule: apply a 300ms debounce to stabilize state during rapid navigation sequences
+		lastPath = cur;
 		if (debounceTimer) clearTimeout(debounceTimer);
+
 		debounceTimer = setTimeout(() => {
 			if (!isExtensionContextValid()) return;
-
 			policyExecutor.probeCors();
 			onNavigate();
+			debounceTimer = null;
 		}, 300);
 	};
 
-	window.addEventListener('popstate', handleNavigation);
+	window.addEventListener('popstate', handleNav);
 
-	// eff: intercept history.pushState to catch programmatic navigation
-	const originalPushState = history.pushState;
+	const origPush = history.pushState;
 	history.pushState = function (...args) {
-		originalPushState.apply(this, args);
-		setTimeout(handleNavigation, 0);
+		origPush.apply(this, args);
+		handleNav();
 	};
 
-	// eff: intercept history.replaceState for URL normalization/redirection events
-	const originalReplaceState = history.replaceState;
+	const origReplace = history.replaceState;
 	history.replaceState = function (...args) {
-		originalReplaceState.apply(this, args);
-		setTimeout(handleNavigation, 0);
+		origReplace.apply(this, args);
+		handleNav();
 	};
 
 	return () => {
 		if (debounceTimer) clearTimeout(debounceTimer);
-		window.removeEventListener('popstate', handleNavigation);
-		history.pushState = originalPushState;
-		history.replaceState = originalReplaceState;
+		window.removeEventListener('popstate', handleNav);
+		history.pushState = origPush;
+		history.replaceState = origReplace;
 	};
 }

@@ -29,9 +29,15 @@ export function registerBadgeHandlers(): void {
 
 		// eff: calculate badge visuals (M for muted, numeric volume otherwise; color reflects mode)
 		let badgeText = '';
-		let badgeColor: string = isCapture ? BADGE_COLORS.CAPTURE : BADGE_COLORS.NATIVE;
+		// note: default enabled to true if missing (legacy)
+		const enabled = (req as any).enabled ?? true;
+		let badgeColor: string = (req as any).isCapture ? BADGE_COLORS.CAPTURE : BADGE_COLORS.NATIVE;
 
-		if (muted || volume === 0) {
+		if (!enabled) {
+			// rule: if disabled, show volume but in gray to indicate inactive state
+			badgeText = volume.toString();
+			badgeColor = '#94a3b8'; // Slate-400 (Gray)
+		} else if (muted || volume === 0) {
 			badgeText = 'M';
 			badgeColor = BADGE_COLORS.MUTED;
 		} else {

@@ -1,143 +1,72 @@
-/**
- * // goal: Set A/B points and manage loop playback
- * // eff: Monitors video time and seeks back to A when B is reached
- */
-
+// goal: Set A/B points and manage loop playback
 import { createLogger } from '../../shared/logger';
 
 const log = createLogger('ABLoop');
 
-// ============================================
-// State
-// ============================================
+interface ABState { a: number | null; b: number | null; loop: boolean; cleanup: (() => void) | null; }
+const s: ABState = { a: null, b: null, loop: false, cleanup: null };
 
-interface ABState {
-	pointA: number | null;
-	pointB: number | null;
-	looping: boolean;
-	listener: (() => void) | null;
-}
-
-const abState: ABState = {
-	pointA: null,
-	pointB: null,
-	looping: false,
-	listener: null
-};
-
-function getPrimaryVideo(): HTMLVideoElement | null {
-	const videos = Array.from(document.querySelectorAll('video'));
-	if (!videos.length) return null;
-
-	const visible = videos.filter(v => {
-		const rect = v.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
-	});
-
-	if (!visible.length) return videos[0] ?? null;
-	visible.sort((a, b) => {
-		const aRect = a.getBoundingClientRect();
-		const bRect = b.getBoundingClientRect();
-		return (bRect.width * bRect.height) - (aRect.width * aRect.height);
-	});
-	return visible[0] ?? null;
-}
-
-// ============================================
-// Loop Logic
-// ============================================
-
-/**
- * // eff: Adds timeupdate listener to video
- */
-function startLoop(video: HTMLVideoElement): void {
-	if (abState.listener) return;
-
-	const handler = () => {
-		if (!abState.looping || abState.pointA === null || abState.pointB === null) return;
-		if (video.currentTime >= abState.pointB) {
-			video.currentTime = abState.pointA;
-			log.info(`Loop: jumped back to A (${abState.pointA.toFixed(2)}s)`);
-		}
-	};
-
-	video.addEventListener('timeupdate', handler);
-	abState.listener = () => video.removeEventListener('timeupdate', handler);
-	log.info('AB loop started');
-}
-
-/**
- * // eff: Removes timeupdate listener
- */
-function stopLoop(): void {
-	if (abState.listener) {
-		abState.listener();
-		abState.listener = null;
+function getPrimary(): HTMLVideoElement | null {
+	const v = document.getElementsByTagName('video');
+	let best: HTMLVideoElement | null = null;
+	let maxA = 0;
+	// eff: Safe live collection iteration
+	for (let i = 0, l = v.length; i < l; i++) {
+		const el = v[i];
+		if (!el) continue;
+		const r = el.getBoundingClientRect();
+		const a = r.width * r.height;
+		if (a > maxA) { maxA = a; best = el; }
 	}
-	abState.looping = false;
-	log.info('AB loop stopped');
+	// eff: Safe return
+	return best || (v.length > 0 ? v[0]! : null);
 }
 
-// ============================================
-// Public API
-// ============================================
+function handleTime(this: HTMLVideoElement) {
+	if (!s.loop || s.a === null || s.b === null) return;
+	if (this.currentTime >= s.b) { this.currentTime = s.a; log.info(`Loop A (${s.a.toFixed(2)}s)`); }
+}
 
-/**
- * // goal: Mark start point (A)
- * // eff: Clears existing loop, saves currentTime as A
- */
+function start(v: HTMLVideoElement) {
+	if (s.cleanup) return;
+	v.addEventListener('timeupdate', handleTime);
+	s.cleanup = () => v.removeEventListener('timeupdate', handleTime);
+	log.info('Loop start');
+}
+
+function stop() {
+	if (s.cleanup) { s.cleanup(); s.cleanup = null; }
+	s.loop = false;
+	log.info('Loop stop');
+}
+
 export function setPointA(): number | null {
-	const video = getPrimaryVideo();
-	if (!video) {
-		log.warn('No video element found');
-		return null;
-	}
-
-	abState.pointA = video.currentTime;
-	abState.pointB = null; // Reset Point B
-	stopLoop();
-	log.info(`Set point A: ${abState.pointA.toFixed(2)}s`);
-	return abState.pointA;
+	const v = getPrimary();
+	if (!v) return null;
+	s.a = v.currentTime; s.b = null;
+	stop();
+	log.info(`Set A: ${s.a.toFixed(2)}s`);
+	return s.a;
 }
 
-/**
- * // goal: Mark end point (B) and start looping
- * // pre: Point A must be set and < current time
- */
 export function setPointB(): { pointB: number | null; looping: boolean } {
-	const video = getPrimaryVideo();
-	if (!video || abState.pointA === null) {
-		log.warn('No video or point A not set');
-		return { pointB: null, looping: false };
-	}
+	const v = getPrimary();
+	if (!v || s.a === null) return { pointB: null, looping: false };
+	if (v.currentTime <= s.a) { log.warn('B <= A'); return { pointB: null, looping: false }; }
 
-	if (video.currentTime <= abState.pointA) {
-		log.warn('Point B must be after point A');
-		return { pointB: null, looping: false };
-	}
-
-	abState.pointB = video.currentTime;
-	abState.looping = true;
-	startLoop(video);
-	log.info(`Set point B: ${abState.pointB.toFixed(2)}s, looping enabled`);
-	return { pointB: abState.pointB, looping: true };
+	s.b = v.currentTime; s.loop = true;
+	start(v);
+	log.info(`Set B: ${s.b.toFixed(2)}s`);
+	return { pointB: s.b, looping: true };
 }
 
-/**
- * // goal: Reset AB state
- */
 export function clearABLoop(): boolean {
-	stopLoop();
-	abState.pointA = null;
-	abState.pointB = null;
-	log.info('AB loop cleared');
+	stop();
+	s.a = null; s.b = null;
+	log.info('Cleared');
 	return true;
 }
 
 export function getABState(): { pointA: number | null; pointB: number | null; looping: boolean } {
-	return {
-		pointA: abState.pointA,
-		pointB: abState.pointB,
-		looping: abState.looping
-	};
+	return { pointA: s.a, pointB: s.b, looping: s.loop };
 }

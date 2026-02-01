@@ -1,5 +1,4 @@
 // goal: orchestrates audio state transitions during fullscreen requests
-// note: Both CAPTURE and WEBAUDIO modes need pause/resume during fullscreen
 // reason: createMediaElementSource() permanently binds to HTMLMediaElement, causing Chrome pipeline deadlock
 
 import { AudioMode, type AudioModeType } from '@nexus/audio-engine';
@@ -10,134 +9,121 @@ import type { PolicyExecutor } from '../../logic/policy-executor/types';
 
 const log = logger.content;
 
-interface FullscreenHandlerConfig {
-	restoreDelayMs: number;
-	enabled: boolean;
+// eff: Module-level state to avoid per-invocation closures
+let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+let savedVolume: number | null = null;
+let savedMode: AudioModeType | null = null;
+let pausedForFullscreen = false;
+let pauseCount = 0;
+
+interface HandlerContext {
+	state: PolicyExecutorState;
+	audioController: PolicyExecutor; // Type mismatch in original? Assuming execute interface
+	captureManager: CaptureManager;
+	delay: number;
 }
 
-const DEFAULT_CONFIG: FullscreenHandlerConfig = {
-	restoreDelayMs: 500,
-	enabled: true,
-};
+let ctx: HandlerContext | null = null;
 
-// eff: sets up fullscreen transition handlers for CAPTURE mode only
-// post: returns a cleanup function to remove event listeners and clear pending timers
+function handlePause() {
+	if (!ctx) return;
+	const { state, captureManager } = ctx;
+
+	const isCapture = captureManager.isActive() || state.activeMode === AudioMode.CAPTURE;
+	const isWebAudio = state.activeMode === AudioMode.NATIVE_WEBAUDIO;
+
+	if (!isCapture && !isWebAudio) {
+		window.postMessage({ type: 'SPECTRA_PAUSE_CONFIRMED' }, '*');
+		return;
+	}
+
+	pauseCount++;
+	const currentPause = pauseCount;
+	if (restoreTimer) { clearTimeout(restoreTimer); restoreTimer = null; }
+
+	if (!pausedForFullscreen) {
+		savedVolume = state.config.volume;
+		savedMode = state.activeMode as AudioModeType | null;
+		pausedForFullscreen = true;
+
+		if (isCapture) {
+			log.info(`[FS] Pausing CAPTURE (saved vol: ${savedVolume}%)`);
+			captureManager.request(false, state.config);
+		} else if (isWebAudio) {
+			log.info(`[FS] Pausing WEBAUDIO`);
+		}
+	}
+
+	window.postMessage({ type: 'SPECTRA_PAUSE_CONFIRMED' }, '*');
+
+	restoreTimer = setTimeout(() => {
+		if (pauseCount !== currentPause) return;
+		restoreTimer = null;
+		if (pausedForFullscreen) {
+			log.info('[FS] Timeout, restoring audio');
+			restoreAudio();
+		}
+	}, 3000);
+}
+
+function restoreAudio() {
+	if (!ctx || !pausedForFullscreen) return;
+	const { state, captureManager, audioController } = ctx;
+
+	pausedForFullscreen = false;
+	const mode = savedMode;
+	savedMode = null;
+
+	if (!state.config.enabled) { savedVolume = null; return; }
+
+	const vol = savedVolume ?? state.config.volume;
+	state.userHasInteracted = true;
+	savedVolume = null;
+
+	if (mode === AudioMode.CAPTURE) {
+		log.info(`[FS] Restore CAPTURE ${vol}%`);
+		captureManager.request(true, { ...state.config, volume: vol });
+	} else {
+		log.info(`[FS] Restore WEBAUDIO`);
+	}
+
+	setTimeout(() => ctx?.audioController.applyState(), 100);
+}
+
+function handleEntered() {
+	if (!pausedForFullscreen || !ctx) return;
+	if (restoreTimer) { clearTimeout(restoreTimer); restoreTimer = null; }
+	log.info('[FS] Entered, scheduled restore');
+	restoreTimer = setTimeout(() => { restoreTimer = null; restoreAudio(); }, ctx.delay);
+}
+
+function handleMessage(e: MessageEvent) {
+	if (e.source !== window) return;
+	if (e.data?.type === 'SPECTRA_PAUSE_FOR_FULLSCREEN') handlePause();
+	else if (e.data?.type === 'SPECTRA_FULLSCREEN_ENTERED') handleEntered();
+}
+
 export function setupFullscreenHandler(
 	state: PolicyExecutorState,
-	policyExecutor: PolicyExecutor,
+	executor: PolicyExecutor,
 	captureManager: CaptureManager,
-	config: Partial<FullscreenHandlerConfig> = {}
+	config: { restoreDelayMs?: number; enabled?: boolean } = {}
 ): () => void {
-	const cfg = { ...DEFAULT_CONFIG, ...config };
-	if (!cfg.enabled) return () => { };
+	if (config.enabled === false) return () => { };
 
-	let savedVolume: number | null = null;
-	// inv: tracks original mode before fullscreen pause for correct restore behavior
-	let savedMode: AudioModeType | null = null;
-	let restoreTimer: ReturnType<typeof setTimeout> | null = null;
-	let pausedForFullscreen = false;
-	let pauseCount = 0;
-
-	// eff: temporarily pauses enhanced audio modes to allow clean fullscreen transition
-	function handlePause(): void {
-		const isCapture = captureManager.isActive() || state.activeMode === AudioMode.CAPTURE;
-		const isWebAudio = state.activeMode === AudioMode.NATIVE_WEBAUDIO;
-
-		// rule: Both CAPTURE and WEBAUDIO modes need pause during fullscreen
-		if (!isCapture && !isWebAudio) {
-			window.postMessage({ type: 'SPECTRA_PAUSE_CONFIRMED' }, '*');
-			return;
-		}
-
-		pauseCount++;
-		const currentPause = pauseCount;
-
-		if (restoreTimer) { clearTimeout(restoreTimer); restoreTimer = null; }
-
-		if (!pausedForFullscreen) {
-			savedVolume = state.config.volume;
-			savedMode = state.activeMode as AudioModeType | null; // save original mode for restore
-			pausedForFullscreen = true;
-
-			if (isCapture) {
-				log.info(`[FS] Fullscreen request, saving volume ${savedVolume}%, pausing CAPTURE`);
-				captureManager.request(false, state.config);
-			} else if (isWebAudio) {
-				log.info(`[FS] Fullscreen request, saving volume ${savedVolume}%, pausing WEBAUDIO`);
-				// note: WEBAUDIO will auto-restore via applyState after fullscreen
-			}
-		}
-
-		window.postMessage({ type: 'SPECTRA_PAUSE_CONFIRMED' }, '*');
-
-		// rule: auto-restore after 3s timeout to prevent permanent audio loss
-		restoreTimer = setTimeout(() => {
-			if (pauseCount !== currentPause) return;
-			restoreTimer = null;
-			if (pausedForFullscreen) {
-				log.info('[FS] Fullscreen timeout, reviving capture');
-				restoreAudio();
-			}
-		}, 3000);
-	}
-
-	// eff: restores audio after fullscreen transition completes
-	function handleEntered(): void {
-		if (!pausedForFullscreen) return;
-
-		if (restoreTimer) { clearTimeout(restoreTimer); restoreTimer = null; }
-
-		log.info('[FS] Fullscreen entered, restoring delayed');
-
-		restoreTimer = setTimeout(() => {
-			restoreTimer = null;
-			restoreAudio();
-		}, cfg.restoreDelayMs);
-	}
-
-	// eff: re-activates audio mode based on what was paused (CAPTURE or WEBAUDIO)
-	function restoreAudio(): void {
-		if (!pausedForFullscreen) return;
-		pausedForFullscreen = false;
-
-		const modeToRestore = savedMode;
-		savedMode = null;
-
-		if (!state.config.enabled) {
-			savedVolume = null;
-			return;
-		}
-
-		const vol = savedVolume ?? state.config.volume;
-		state.userHasInteracted = true;
-		savedVolume = null;
-
-		// rule: only request CAPTURE if we were in CAPTURE mode before fullscreen
-		if (modeToRestore === AudioMode.CAPTURE) {
-			log.info(`[FS] Restoring CAPTURE, volume ${vol}%`);
-			captureManager.request(true, { ...state.config, volume: vol });
-		} else {
-			// note: WEBAUDIO mode - just trigger applyState to reinitialize WebAudio pipeline
-			log.info(`[FS] Restoring WEBAUDIO, volume ${vol}%`);
-		}
-
-		// eff: always trigger applyState to ensure proper mode execution
-		setTimeout(() => policyExecutor.applyState(), 100);
-	}
-
-	function handleMessage(event: MessageEvent): void {
-		if (event.source !== window) return;
-		switch (event.data?.type) {
-			case 'SPECTRA_PAUSE_FOR_FULLSCREEN': handlePause(); break;
-			case 'SPECTRA_FULLSCREEN_ENTERED': handleEntered(); break;
-		}
-	}
+	ctx = {
+		state,
+		audioController: executor,
+		captureManager,
+		delay: config.restoreDelayMs ?? 500
+	};
 
 	window.addEventListener('message', handleMessage);
-	log.debug('[FS] Fullscreen Handler enabled (CAPTURE only)');
+	log.debug('[FS] Handler enabled');
 
 	return () => {
 		window.removeEventListener('message', handleMessage);
 		if (restoreTimer) clearTimeout(restoreTimer);
+		ctx = null;
 	};
 }

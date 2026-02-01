@@ -11,7 +11,11 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
 // eff: checks for active capture sessions and schedules/cancels offscreen cleanup
 function checkOffscreenIdle(): void {
-	const activeCount = Array.from(captureStates.values()).filter(v => v).length;
+	let activeCount = 0;
+	for (const v of captureStates.values()) {
+		if (v) activeCount++;
+	}
+
 	if (activeCount === 0) {
 		if (!idleTimer) {
 			swLog.debug(`No active captures, scheduling offscreen cleanup in ${IDLE_TIMEOUT}ms`);

@@ -50,6 +50,7 @@ export const DEFAULT_CONFIG: AudioConfig = {
   pan: 0,
   delay: 0,
   eqValues: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  speed: 1.0
 };
 
 // post: returns deep-merged and validated AudioConfig object, ensuring eqValues array presence and removing transient command fields

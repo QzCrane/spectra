@@ -3,6 +3,7 @@
 import type { AudioConfig, GlobalSettings } from '@nexus/kernel';
 import type { CardInternalState } from './types';
 import { sendToTab, sendToBackground } from '../utils/dom';
+import { createBadgePayload } from '../../shared/badge-logic';
 
 export function createGetCapturing(
   state: CardInternalState,
@@ -38,13 +39,8 @@ export function createUpdateFn(
 
       // note: ensure badge reflects the active capture and volume status immediately
       state.userInteracted = true;
-      sendToBackground('BADGE_UPDATE', {
-        tabId,
-        volume: config.volume,
-        muted: config.muted,
-        isCapture: true,
-        userInteracted: state.userInteracted,
-      });
+      const payload = createBadgePayload(config, true, state.userInteracted);
+      sendToBackground('BADGE_UPDATE', { tabId, ...payload });
 
       render();
       return;
@@ -76,13 +72,8 @@ export function createUpdateFn(
         state.userInteracted = true;
       }
 
-      sendToBackground('BADGE_UPDATE', {
-        tabId,
-        volume: config.volume,
-        muted: config.muted,
-        isCapture: needsCapture,
-        userInteracted: state.userInteracted,
-      });
+      const payload = createBadgePayload(config, needsCapture, state.userInteracted);
+      sendToBackground('BADGE_UPDATE', { tabId, ...payload });
     }
 
     render();

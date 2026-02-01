@@ -4,7 +4,7 @@ import type { AudioConfig } from '@nexus/kernel';
 import type { CardUIElements } from '../types';
 import type { CardInternalState } from './types';
 import { AUDIO_UI, TIMING } from '../constants';
-import { getDomain, sendToBackground } from '../utils/dom';
+import { getDomain, sendToBackground, sendToTab } from '../utils/dom';
 import { DEFAULT_CONFIG } from './types';
 import { bindMediaControls } from './media-events';
 
@@ -116,7 +116,17 @@ export function bindCardEvents(params: EventsParams): void {
     });
   }
 
-  ui.btnSave.onclick = () => {
+  ui.btnSave.onclick = async () => {
+    // eff: capture current playback speed to include in the preset
+    try {
+      const mediaState = await sendToTab<{ speed: number }>(tabId, 'MEDIA_GET_STATE', {});
+      if (mediaState && mediaState.speed) {
+        state.config.speed = mediaState.speed;
+      }
+    } catch (e) {
+      console.warn('Failed to get speed for preset save', e);
+    }
+
     chrome.storage.local.get(['siteSettings'], (r) => {
       const s = (r.siteSettings as Record<string, AudioConfig>) || {};
       s[domain] = state.config;
@@ -131,5 +141,5 @@ export function bindCardEvents(params: EventsParams): void {
 
   ui.btnReset.onclick = () => update(DEFAULT_CONFIG);
 
-  bindMediaControls(ui, tabId);
+  bindMediaControls(ui, tabId, (speed) => update({ speed }));
 }

@@ -19,40 +19,28 @@ const publicDir = resolve(__dirname, 'public');
 const isWatch = process.argv.includes('--watch');
 const isDev = process.argv.includes('--dev') || isWatch;
 
-// Helper: run command with compressed output
 function run(label, cmd, opts = {}) {
 	try {
 		execSync(cmd, { stdio: 'pipe', cwd: __dirname, ...opts });
 		return true;
 	} catch (e) {
-		if (opts.silent) return false;
-		console.error(`❌ ${label}: ${e.stderr?.toString().trim() || e.message}`);
+		if (!opts.silent) console.error(`❌ ${label}: ${e.stderr?.toString().trim() || e.message}`);
 		return false;
 	}
 }
 
-// Pre-flight checks (skip in watch mode)
 if (!isWatch) {
-	const verifyPath = resolve(__dirname, '../../scripts/verify-architecture.js');
-	if (existsSync(verifyPath)) {
-		run('verify', 'node ../../scripts/verify-architecture.js', { silent: true });
-	}
-	
-	if (!run('tsc', 'npx tsc --noEmit --skipLibCheck')) {
-		process.exit(1);
-	}
-	console.log('✓ Pre-flight: tsc OK');
+	if (!run('tsc', 'bun tsc --noEmit --skipLibCheck')) process.exit(1);
+	console.log('✓ TSC OK');
 }
 
-// Prepare dist
+// eff: Fast clean & copy
 if (existsSync(distDir)) rmSync(distDir, { recursive: true });
 mkdirSync(distDir, { recursive: true });
 cpSync(publicDir, distDir, { recursive: true });
 
-const commonConfig = {
-	bundle: true,
-	minify: !isDev,
-	sourcemap: isDev ? 'inline' : false,
+const cfg = {
+	bundle: true, minify: !isDev, sourcemap: isDev ? 'inline' : false,
 	define: { 'process.env.NODE_ENV': isDev ? '"development"' : '"production"' },
 	loader: { '.ts': 'ts', '.tsx': 'tsx' },
 	alias: {
@@ -73,43 +61,19 @@ const entries = [
 ];
 
 if (isWatch) {
-	console.log('👀 Watch mode...');
-	const contexts = await Promise.all(entries.map(async ({ entry, out }) => {
-		const ctx = await esbuild.context({
-			...commonConfig,
-			entryPoints: [entry],
-			outfile: `dist/${out}`,
-			logLevel: 'warning',
-			plugins: [{
-				name: 'rebuild-notify',
-				setup(build) {
-					build.onEnd(r => r.errors.length === 0 && console.log(`✓ ${out}`));
-				}
-			}]
+	console.log('👀 Watch...');
+	const ctxs = await Promise.all(entries.map(async ({ entry, out }) => {
+		const c = await esbuild.context({
+			...cfg, entryPoints: [entry], outfile: `dist/${out}`, logLevel: 'warning',
+			plugins: [{ name: 'notify', setup: b => b.onEnd(r => !r.errors.length && console.log(`✓ ${out}`)) }]
 		});
-		await ctx.watch();
-		return ctx;
+		await c.watch(); return c;
 	}));
-	
-	process.on('SIGINT', async () => {
-		await Promise.all(contexts.map(ctx => ctx.dispose()));
-		process.exit(0);
-	});
-	
+	process.on('SIGINT', async () => { await Promise.all(ctxs.map(c => c.dispose())); process.exit(0); });
 } else {
-	// Build all entries in parallel, collect results
-	const results = await Promise.all(entries.map(async ({ entry, out }) => {
-		try {
-			await esbuild.build({ ...commonConfig, entryPoints: [entry], outfile: `dist/${out}`, write: true });
-			const kb = (statSync(`dist/${out}`).size / 1024).toFixed(0);
-			return `${out.replace('.js', '')}:${kb}KB`;
-		} catch (e) {
-			console.error(`❌ ${out}: ${e.message}`);
-			process.exit(1);
-		}
+	const res = await Promise.all(entries.map(async ({ entry, out }) => {
+		await esbuild.build({ ...cfg, entryPoints: [entry], outfile: `dist/${out}`, write: true });
+		return `${out.split('.')[0]}:${(statSync(`dist/${out}`).size / 1024).toFixed(0)}KB`;
 	}));
-	
-	// Single line output: all bundles with sizes
-	console.log(`✓ Build: ${results.join(' | ')}`);
-	console.log(`🎉 Done → dist/`);
+	console.log(`✓ Build: ${res.join(' | ')}`);
 }
