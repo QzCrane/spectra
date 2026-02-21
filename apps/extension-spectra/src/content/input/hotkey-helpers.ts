@@ -3,6 +3,7 @@ import type { HotkeyAction, HotkeyParams, AudioConfig } from '@nexus/contracts';
 import { Actions } from '@nexus/contracts';
 import { listMarkers } from '../video/time-marker';
 import { showToast } from '../ui/toast';
+import { getPrimaryVideo } from '../utils/media-utils';
 
 let getConfigFn: (() => AudioConfig) | null = null;
 let updateConfigFn: ((changes: Partial<AudioConfig>, options?: { showOSD?: boolean; unMute?: boolean }) => void) | null = null;
@@ -29,6 +30,24 @@ export function sendVolumeAction(action: HotkeyAction, params?: HotkeyParams): v
 	if (updateConfigFn) updateConfigFn(ch, { showOSD: true });
 }
 
+// eff: handles speed adjustment hotkeys through unified config flow
+export function sendSpeedAction(action: HotkeyAction, params?: HotkeyParams): void {
+	const step = params?.step ?? 0.1;
+	const c = getConfig();
+	let newSpeed: number = c.speed ?? 1;
+
+	switch (action) {
+		case 'speed_up': newSpeed = Math.min(16, newSpeed + step); break;
+		case 'speed_down': newSpeed = Math.max(0.1, newSpeed - step); break;
+		case 'speed_reset': newSpeed = 1; break;
+		case 'speed_set': if (params?.speed !== undefined) newSpeed = params.speed; break;
+	}
+
+	// note: round to 2 decimal places to avoid floating point errors
+	newSpeed = Math.round(newSpeed * 100) / 100;
+	if (updateConfigFn) updateConfigFn({ speed: newSpeed }, { showOSD: true });
+}
+
 export function sendAudioReset(): void {
 	updateConfigFn?.(
 		{ volume: 100, muted: false, eqValues: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bass: false, compressor: false },
@@ -43,7 +62,7 @@ export function sendCaptureToggle(): void {
 export function jumpMarker(fwd: boolean): void {
 	const m = listMarkers();
 	if (!m.length) return;
-	const v = document.getElementsByTagName('video')[0];
+	const v = getPrimaryVideo();
 	if (!v) return;
 	const t = v.currentTime;
 
@@ -59,7 +78,7 @@ export function jumpMarker(fwd: boolean): void {
 }
 
 export function toggleLoop(): void {
-	const v = document.getElementsByTagName('video')[0];
+	const v = getPrimaryVideo();
 	if (v) {
 		v.loop = !v.loop;
 		showToast(v.loop ? 'Loop ON' : 'Loop OFF');

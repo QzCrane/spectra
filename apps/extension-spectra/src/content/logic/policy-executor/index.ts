@@ -3,10 +3,11 @@
 import type { AudioConfig } from '@nexus/kernel';
 import { AudioMode, type PolicyContext, type UrlInfo } from '@nexus/audio-engine';
 import { logger } from '../../../shared/logger';
+import { applyToMedia } from '../../utils/media-utils';
 import type { PolicyExecutorDeps, PolicyExecutorState } from '../../types';
 import { executeMode, hasUserGesture, initModeExecutorCallbacks } from '../mode-executor';
 import type { PolicyExecutor, InternalState } from './types';
-import { updateBadge, broadcastUI } from './badge-sync'; // Assuming these don't hold too much state themselves
+import { updateBadge, broadcastUI } from './badge-sync';
 import { setupCorsCallback, probeCorsOnMediaDetected, initCorsStatus } from './cors-handler';
 import { updateConfig } from './config-updater';
 
@@ -35,13 +36,8 @@ export async function createPolicyExecutor(deps: PolicyExecutorDeps, state: Poli
 		};
 
 		if (!deps.policyEngine?.calculateMode) {
-			// Fallback lite
 			const dv = state.config.muted ? 0 : Math.min(1, state.config.volume / 100);
-			const els = document.getElementsByTagName('video');
-			for (let i = 0; i < els.length; i++) {
-				const el = els[i];
-				if (el) { el.volume = dv; el.muted = state.config.muted; }
-			}
+			applyToMedia(el => { el.volume = dv; el.muted = state.config.muted; });
 			return;
 		}
 

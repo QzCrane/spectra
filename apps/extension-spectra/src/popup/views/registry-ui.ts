@@ -3,6 +3,7 @@
 import type { DomainEntry } from '@nexus/contracts';
 import { $ } from '../utils/dom';
 import type { I18NDict } from '../types';
+import { safeStorageSet } from '../../shared/safe-storage';
 
 type TabType = 'restricted' | 'safe';
 
@@ -94,7 +95,7 @@ function addDomain(domain: string, ui: RegistryUIElements): void {
 
 // goal: persists the latest registry state to local storage and updates the visible list
 function saveAndRender(ui: RegistryUIElements): void {
-	chrome.storage.local.set({ restrictedRegistry: allEntries });
+	safeStorageSet({ restrictedRegistry: allEntries });
 	renderList(ui);
 }
 

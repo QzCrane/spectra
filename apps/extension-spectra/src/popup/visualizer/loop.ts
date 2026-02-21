@@ -50,7 +50,7 @@ export function createVizLoop(params: VizLoopParams): () => void {
 
       if (!isRequesting) {
         isRequesting = true;
-        let buffer: number[] | null = null;
+        let buffer: Uint8Array | null = null;
         const currentCapturing = getCapturing();
 
         try {
@@ -58,16 +58,16 @@ export function createVizLoop(params: VizLoopParams): () => void {
             // mode: Capture -> poll high-fidelity spectral data from the offscreen document
             const res = await chrome.runtime.sendMessage(msgOffscreen).catch(() => null);
             if (res?.buffer) {
-              buffer = res.buffer;
+              buffer = new Uint8Array(res.buffer);
             } else {
               // note: fallback to content script probe
-              const data = await sendToTab<{ buffer: number[] }>(tabId, 'AUDIO_GET_VISUALIZER', {});
-              if (data?.buffer) buffer = data.buffer;
+              const data = await sendToTab<{ buffer: ArrayBuffer }>(tabId, 'AUDIO_GET_VISUALIZER', {});
+              if (data?.buffer) buffer = new Uint8Array(data.buffer);
             }
           } else {
             // mode: Native -> poll data directly from the content script
-            const data = await sendToTab<{ buffer: number[] }>(tabId, 'AUDIO_GET_VISUALIZER', {});
-            if (data?.buffer) buffer = data.buffer;
+            const data = await sendToTab<{ buffer: ArrayBuffer }>(tabId, 'AUDIO_GET_VISUALIZER', {});
+            if (data?.buffer) buffer = new Uint8Array(data.buffer);
           }
         } catch { } // silent fail
 

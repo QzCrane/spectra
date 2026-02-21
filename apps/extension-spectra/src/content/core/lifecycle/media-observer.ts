@@ -4,63 +4,48 @@
 import { AudioMode } from '@nexus/audio-engine';
 import { WebAudioController } from '@nexus/audio-engine';
 import { isExtensionContextValid } from '../context-guard';
+import { debounce, createEventListener, createCleanupManager } from '../../utils/timing';
+import { hasMediaElements as hasMedia } from '../../utils/media-utils';
 import type { PolicyExecutorState } from '../../types';
 import type { PolicyExecutor } from '../../logic/policy-executor';
 
-// eff: initializes a MutationObserver on the document root and triggers state re-application upon change detection
-// post: returns a cleanup function to disconnect the observer and clear pending timeouts
+export const hasMediaElements = hasMedia;
+
 export function createMediaObserver(
 	state: PolicyExecutorState,
 	audioController: WebAudioController,
 	policyExecutor: PolicyExecutor
 ): () => void {
-	let observerTimeout: ReturnType<typeof setTimeout> | null = null;
+	const cleanup = createCleanupManager();
+
+	const debouncedApply = debounce(() => {
+		if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) audioController.scanAndAttach();
+		policyExecutor.applyState();
+	}, 500);
 
 	const observer = new MutationObserver(() => {
-		// rule: execution is halted if the extension context becomes invalid
-		if (observerTimeout) clearTimeout(observerTimeout);
-		observerTimeout = setTimeout(() => {
-			if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) {
-				audioController.scanAndAttach();
-			}
-			policyExecutor.applyState();
-		}, 500);
+		if (!isExtensionContextValid()) return;
+		debouncedApply();
 	});
 
+	observer.observe(document.documentElement, { childList: true, subtree: true });
+	cleanup.add(() => observer.disconnect());
 
-	observer.observe(document.documentElement, {
-		childList: true,
-		subtree: true,
-	});
-
-	// eff: immediate capture of media playback events to handle short-lived audio
 	const immediateAttachHandler = (e: Event) => {
 		const t = e.target as HTMLElement;
-		const n = t.nodeName;
-		if (n !== 'AUDIO' && n !== 'VIDEO') return;
-
-		// console.log('[SPECTRA-OBSERVER] Play/Loaded:', t);
+		if (t.nodeName !== 'AUDIO' && t.nodeName !== 'VIDEO') return;
 
 		if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) {
 			if (audioController.attachNode(t as HTMLMediaElement)) {
-				// note: must apply current volume config immediately
 				audioController.updateParams(state.config);
 			}
 		}
+		policyExecutor.applyState();
 	};
 
-	document.addEventListener('play', immediateAttachHandler, true);
-	document.addEventListener('loadeddata', immediateAttachHandler, true);
+	cleanup.add(createEventListener(document, 'play', immediateAttachHandler, true));
+	cleanup.add(createEventListener(document, 'loadeddata', immediateAttachHandler, true));
+	cleanup.add(debouncedApply.cancel);
 
-	return () => {
-		if (observerTimeout) clearTimeout(observerTimeout);
-		observer.disconnect();
-		document.removeEventListener('play', immediateAttachHandler, true);
-		document.removeEventListener('loadeddata', immediateAttachHandler, true);
-	};
-}
-
-// inv: returns true if at least one <audio> or <video> element exists
-export function hasMediaElements(): boolean {
-	return document.getElementsByTagName('video').length > 0 || document.getElementsByTagName('audio').length > 0;
+	return cleanup.dispose;
 }

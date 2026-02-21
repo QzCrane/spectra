@@ -684,6 +684,16 @@
               Saved Presets
             </div>
             <div class="setting-card" style="padding: 16px">
+              <!-- Search Input -->
+              <div class="preset-search-wrapper">
+                <input
+                  type="text"
+                  id="preset-search"
+                  class="preset-search-input"
+                  placeholder="Search presets..."
+                />
+              </div>
+
               <!-- Presets List -->
               <div id="presets-list" class="presets-list"></div>
 
@@ -701,7 +711,7 @@
             </div>
           </div>
 
-          <div class="version-info">Ver 24.0 • Ultra Build</div>
+          <div class="version-info">v1.0.0 • Dev</div>
         </div>
       </div>
     </div>
@@ -731,6 +741,13 @@
                 data-i18n-title="saveTooltip"
               >
                 💾
+              </button>
+              <button
+                class="btn-text btn-save-global"
+                title="Save as Global Preset"
+                data-i18n-title="btnSaveAsGlobal"
+              >
+                🌍
               </button>
             </div>
             <label class="switch-main"

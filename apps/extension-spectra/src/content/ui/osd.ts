@@ -3,12 +3,23 @@
 import type { AudioConfig } from '@nexus/kernel';
 import type { ContentGlobalSettings } from '../core/settings-manager';
 
-interface OSDState { root: ShadowRoot | null; timer: ReturnType<typeof setTimeout> | null; }
-const state: OSDState = { root: null, timer: null };
+interface OSDState { root: ShadowRoot | null; timer: ReturnType<typeof setTimeout> | null; lastType: 'volume' | 'speed' | null }
+const state: OSDState = { root: null, timer: null, lastType: null };
 
+// eff: shows volume OSD with current config state
 export function showOSD(c: AudioConfig, cap: boolean, s: ContentGlobalSettings, pop: boolean): void {
 	if (pop || !s.osdEnabled || !c.enabled) return;
+	renderOSD('volume', c, cap, s);
+}
 
+// eff: shows speed OSD with current speed value
+export function showSpeedOSD(speed: number, s: ContentGlobalSettings, pop: boolean): void {
+	if (pop || !s.osdEnabled) return;
+	renderOSD('speed', { speed } as AudioConfig, false, s);
+}
+
+// eff: core OSD rendering logic, handles both volume and speed display modes
+function renderOSD(type: 'volume' | 'speed', c: AudioConfig, cap: boolean, s: ContentGlobalSettings): void {
 	if (!state.root) {
 		const h = document.createElement('div');
 		h.style.cssText = 'position:fixed;top:15%;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
@@ -16,7 +27,7 @@ export function showOSD(c: AudioConfig, cap: boolean, s: ContentGlobalSettings, 
 
 		const ws = h.attachShadow({ mode: 'open' });
 		const css = document.createElement('style');
-		css.textContent = `.o{background:rgba(20,20,30,0.85);backdrop-filter:blur(8px);padding:12px 20px;border-radius:30px;color:#fff;display:flex;align-items:center;gap:12px;font-family:system-ui;transition:0.2s;opacity:0;transform:translateY(-10px)}.v{opacity:1;transform:translateY(0)}.b{width:120px;height:6px;background:rgba(255,255,255,0.2);border-radius:3px;overflow:hidden;position:relative}.f{height:100%;width:0%;transition:width 0.05s linear;background:#3b82f6}.c .f{background:#8b5cf6}.m .f{background:#9ca3af}.mr{position:absolute;left:12.5%;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.6);z-index:5}.t{font-weight:600;font-size:14px;min-width:40px;text-align:right}`;
+		css.textContent = `.o{background:rgba(20,20,30,0.85);backdrop-filter:blur(8px);padding:12px 20px;border-radius:30px;color:#fff;display:flex;align-items:center;gap:12px;font-family:system-ui;transition:0.2s;opacity:0;transform:translateY(-10px)}.v{opacity:1;transform:translateY(0)}.b{width:120px;height:6px;background:rgba(255,255,255,0.2);border-radius:3px;overflow:hidden;position:relative}.f{height:100%;width:0%;transition:width 0.05s linear;background:#3b82f6}.c .f{background:#8b5cf6}.m .f{background:#9ca3af}.mr{position:absolute;left:12.5%;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.6);z-index:5}.t{font-weight:600;font-size:14px;min-width:50px;text-align:right}.s .f{background:#10b981}`;
 
 		const o = document.createElement('div'); o.className = 'o'; o.id = 'o';
 		const i = document.createElement('span'); i.id = 'i';
@@ -38,15 +49,28 @@ export function showOSD(c: AudioConfig, cap: boolean, s: ContentGlobalSettings, 
 	if (!o || !f || !t || !i) return;
 
 	o.classList.add('v');
-	o.classList.toggle('c', cap);
+	o.classList.toggle('c', cap && type === 'volume');
+	o.classList.toggle('s', type === 'speed');
 
-	const muted = c.muted || c.volume === 0;
-	o.classList.toggle('m', muted);
+	if (type === 'speed') {
+		// speed display mode
+		const speed = c.speed ?? 1;
+		o.classList.remove('m');
+		// map speed 0.1-16 to percentage for bar display
+		const pct = Math.min(100, Math.max(0, (speed / 16) * 100));
+		f.style.width = pct + '%';
+		t.textContent = speed.toFixed(2) + 'x';
+		i.textContent = speed > 1 ? '⚡' : (speed < 1 ? '🐢' : '⏱️');
+	} else {
+		// volume display mode
+		const muted = c.muted || c.volume === 0;
+		o.classList.toggle('m', muted);
+		f.style.width = Math.min(100, (c.volume / 800) * 100) + '%';
+		t.textContent = muted ? 'MUTE' : c.volume + '%';
+		i.textContent = muted ? '🔇' : (c.volume > 100 ? '🚀' : '🔊');
+	}
 
-	f.style.width = Math.min(100, (c.volume / 800) * 100) + '%';
-	t.textContent = muted ? 'MUTE' : c.volume + '%';
-	i.textContent = muted ? '🔇' : (c.volume > 100 ? '🚀' : '🔊');
-
+	state.lastType = type;
 	if (state.timer) clearTimeout(state.timer);
 	state.timer = setTimeout(() => o.classList.remove('v'), 2000);
 }

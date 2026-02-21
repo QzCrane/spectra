@@ -3,7 +3,7 @@
 
 import type { AudioConfig } from '@nexus/kernel';
 import { predictCapture } from '@nexus/audio-engine';
-import { showOSD } from '../../ui/osd';
+import { showOSD, showSpeedOSD } from '../../ui/osd';
 import { safeSend } from '../../core/context-guard';
 import type { PolicyExecutorDeps, PolicyExecutorState } from '../../types';
 import type { InternalState } from './types';
@@ -45,19 +45,24 @@ export function updateConfig(
 
 	if (options.showOSD) {
 		const settings = settingsManager.get();
-		const isRestricted = internalState.corsStatus === 'RESTRICTED';
-		const predictedCapture = predictCapture({
-			config: newConfig,
-			isRestricted,
-			visualizerEnabled: settings.visualizerEnabled,
-		});
-
-		showOSD(
-			state.config,
-			predictedCapture,
-			settings,
-			state.isPopupOpen
-		);
+		// note: show speed OSD for speed-only changes, volume OSD for other changes
+		const isSpeedOnlyChange = Object.keys(changes).length === 1 && 'speed' in changes;
+		if (isSpeedOnlyChange) {
+			showSpeedOSD(newConfig.speed ?? 1, settings, state.isPopupOpen);
+		} else {
+			const isRestricted = internalState.corsStatus === 'RESTRICTED';
+			const predictedCapture = predictCapture({
+				config: newConfig,
+				isRestricted,
+				visualizerEnabled: settings.visualizerEnabled,
+			});
+			showOSD(
+				state.config,
+				predictedCapture,
+				settings,
+				state.isPopupOpen
+			);
+		}
 	}
 
 	// eff: sync the updated domain configuration to the background worker for persistence

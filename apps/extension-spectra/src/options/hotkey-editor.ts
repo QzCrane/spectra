@@ -3,6 +3,7 @@
 import type { HotkeyBinding, SiteHotkeyConfig } from '@nexus/contracts';
 import { DEFAULT_MODIFIERS, PRESET_BINDINGS } from '@nexus/contracts';
 import { openModal, formatKeyCombo } from './modal';
+import { safeStorageGet, safeStorageSet } from '../shared/safe-storage';
 
 const listContainer = document.getElementById('hotkeys-list')!;
 const emptyState = document.getElementById('hotkeys-empty')!;
@@ -25,7 +26,7 @@ export async function initHotkeyEditor(): Promise<void> {
 
 // eff: retrieves settings from chrome.storage, falling back to PRESET_BINDINGS if the user has no custom config
 async function loadSettings(): Promise<void> {
-	const result = await chrome.storage.local.get('hotkeySettings');
+	const result = await safeStorageGet<{ hotkeySettings?: SiteHotkeyConfig }>(['hotkeySettings'], {});
 	if (result.hotkeySettings) {
 		settings = result.hotkeySettings;
 	} else {
@@ -35,8 +36,7 @@ async function loadSettings(): Promise<void> {
 }
 
 async function saveSettings(): Promise<void> {
-	await chrome.storage.local.set({ hotkeySettings: settings });
-	console.log('[SPECTRA] Hotkey settings saved');
+	await safeStorageSet({ hotkeySettings: settings });
 }
 
 // eff: reconstructs the DOM list of hotkey bindings based on the current in-memory settings

@@ -1,6 +1,7 @@
 // goal: defines internal types, state interfaces, and configuration defaults for the popup tab card component
 
 import type { AudioConfig, GlobalSettings } from '@nexus/kernel';
+import { DEFAULT_AUDIO_CONFIG } from '@nexus/kernel';
 import type { DomainEntry } from '@nexus/contracts';
 import type { CardUIElements, I18NDict } from '../types';
 
@@ -14,6 +15,12 @@ export interface CardInternalState {
   isDragging: boolean;
 }
 
+export type EqCurveDrawerFactory = (
+  canvas: HTMLCanvasElement,
+  sliderRow: HTMLElement,
+  getEqValues: () => number[]
+) => { draw: (color?: string) => void; updateMetrics: () => void };
+
 export interface InitCardParams {
   container: HTMLElement;
   template: HTMLTemplateElement;
@@ -22,11 +29,7 @@ export interface InitCardParams {
   registryEntries: DomainEntry[];
   getGlobalSettings: () => GlobalSettings;
   isBackground?: boolean;
-  createEqCurveDrawer?: (
-    canvas: HTMLCanvasElement,
-    sliderRow: HTMLElement,
-    getEqValues: () => number[]
-  ) => { draw: (color?: string) => void; updateMetrics: () => void };
+  createEqCurveDrawer?: EqCurveDrawerFactory;
 }
 
 // CardContext: unified handle passed to sub-modules (rendering, messaging, events) to access shared tab state and UI refs
@@ -40,24 +43,11 @@ export interface CardContext {
   getCapturing: () => boolean;
 }
 
-export const DEFAULT_CONFIG: AudioConfig = {
-  enabled: true,
-  volume: 100,
-  muted: false,
-  compressor: false,
-  mono: false,
-  bass: false,
-  pan: 0,
-  delay: 0,
-  eqValues: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  speed: 1.0
-};
-
 // post: returns deep-merged and validated AudioConfig object, ensuring eqValues array presence and removing transient command fields
 export function cleanConfig(config: Partial<AudioConfig> | null): AudioConfig {
-  const c = { ...DEFAULT_CONFIG, ...config };
+  const c = { ...DEFAULT_AUDIO_CONFIG, ...config };
   if (!Array.isArray(c.eqValues)) {
-    c.eqValues = [...DEFAULT_CONFIG.eqValues];
+    c.eqValues = [...DEFAULT_AUDIO_CONFIG.eqValues];
   }
   if (c.enabled === undefined) {
     c.enabled = true;

@@ -9,8 +9,7 @@ import { generateRemoteQR } from './qr-generator.js';
 import { Actions } from '@nexus/contracts';
 import { renderRemoteModal, closeRemoteModal, isRemoteModalOpen, setRemoteI18n } from './modal-renderer.js';
 import type { I18NDict } from '../popup/types';
-
-const REMOTE_HOST = 'https://nexus-remote.pages.dev';
+import { REMOTE_HOST } from './constants.js';
 
 let currentDict: I18NDict | null = null;
 let currentTabId: number | null = null;

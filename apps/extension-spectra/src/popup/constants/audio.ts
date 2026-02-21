@@ -10,6 +10,3 @@ export const AUDIO_UI = {
   EQ_MAX: 12,
   EQ_STEP: 0.1,
 } as const;
-
-// DEFAULT_EQ_VALUES: initial flat gain (0dB) for all 10 frequency bands
-export const DEFAULT_EQ_VALUES = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] as const;

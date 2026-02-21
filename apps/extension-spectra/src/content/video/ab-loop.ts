@@ -1,26 +1,11 @@
 // goal: Set A/B points and manage loop playback
 import { createLogger } from '../../shared/logger';
+import { getPrimaryVideo } from '../utils/media-utils';
 
 const log = createLogger('ABLoop');
 
 interface ABState { a: number | null; b: number | null; loop: boolean; cleanup: (() => void) | null; }
 const s: ABState = { a: null, b: null, loop: false, cleanup: null };
-
-function getPrimary(): HTMLVideoElement | null {
-	const v = document.getElementsByTagName('video');
-	let best: HTMLVideoElement | null = null;
-	let maxA = 0;
-	// eff: Safe live collection iteration
-	for (let i = 0, l = v.length; i < l; i++) {
-		const el = v[i];
-		if (!el) continue;
-		const r = el.getBoundingClientRect();
-		const a = r.width * r.height;
-		if (a > maxA) { maxA = a; best = el; }
-	}
-	// eff: Safe return
-	return best || (v.length > 0 ? v[0]! : null);
-}
 
 function handleTime(this: HTMLVideoElement) {
 	if (!s.loop || s.a === null || s.b === null) return;
@@ -41,7 +26,7 @@ function stop() {
 }
 
 export function setPointA(): number | null {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return null;
 	s.a = v.currentTime; s.b = null;
 	stop();
@@ -50,7 +35,7 @@ export function setPointA(): number | null {
 }
 
 export function setPointB(): { pointB: number | null; looping: boolean } {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v || s.a === null) return { pointB: null, looping: false };
 	if (v.currentTime <= s.a) { log.warn('B <= A'); return { pointB: null, looping: false }; }
 

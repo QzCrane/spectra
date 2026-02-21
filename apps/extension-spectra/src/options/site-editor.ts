@@ -3,6 +3,7 @@
 import type { HotkeySettings, HotkeyBinding } from '@nexus/contracts';
 import { DEFAULT_HOTKEY_SETTINGS, DEFAULT_MODIFIERS } from '@nexus/contracts';
 import { openModal } from './modal';
+import { safeStorageGet, safeStorageSet } from '../shared/safe-storage';
 
 let settings: HotkeySettings = { ...DEFAULT_HOTKEY_SETTINGS };
 let selectedSite: string | null = null;
@@ -16,13 +17,13 @@ export async function initSiteEditor(): Promise<void> {
 
 async function loadSettings(): Promise<void> {
 	try {
-		const result = await chrome.storage.local.get('hotkeySettings');
+		const result = await safeStorageGet<{ hotkeySettings?: HotkeySettings }>(['hotkeySettings'], {});
 		if (result.hotkeySettings) settings = { ...DEFAULT_HOTKEY_SETTINGS, ...result.hotkeySettings };
-	} catch { /* ignore */ }
+	} catch { }
 }
 
 async function saveSettings(): Promise<void> {
-	await chrome.storage.local.set({ hotkeySettings: settings });
+	await safeStorageSet({ hotkeySettings: settings });
 }
 
 // eff: updates the domain dropdown with all currently configured websites from the user's settings

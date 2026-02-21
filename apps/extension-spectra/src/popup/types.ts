@@ -26,6 +26,7 @@ export interface CardUIElements {
   eqVals: NodeListOf<HTMLElement>;
   btnSave: HTMLElement;
   btnReset: HTMLElement;
+  btnSaveGlobal: HTMLElement | null;
   canvas: HTMLCanvasElement;
   sliderArea: HTMLElement;
   tComp: HTMLElement;

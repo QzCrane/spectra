@@ -1,12 +1,13 @@
 // goal: binds native DOM events (clicks, inputs, wheel, touch) to audio configuration updates and registry persistence
 
 import type { AudioConfig } from '@nexus/kernel';
+import { DEFAULT_AUDIO_CONFIG } from '@nexus/kernel';
 import type { CardUIElements } from '../types';
 import type { CardInternalState } from './types';
 import { AUDIO_UI, TIMING } from '../constants';
 import { getDomain, sendToBackground, sendToTab } from '../utils/dom';
-import { DEFAULT_CONFIG } from './types';
 import { bindMediaControls } from './media-events';
+import { safeStorageGet, safeStorageSet } from '../../shared/safe-storage';
 
 export interface EventsParams {
   ui: CardUIElements;
@@ -66,6 +67,7 @@ export function bindCardEvents(params: EventsParams): void {
   // eff: enable rapid volume adjustment via mouse wheel with preventDefault to avoid scrolling the popup body
   ui.sliderArea.addEventListener('wheel', (e) => {
     e.preventDefault();
+    e.stopPropagation();
     if (!state.config.enabled) return;
 
     let v = parseInt(ui.slider.value, 10);
@@ -103,6 +105,7 @@ export function bindCardEvents(params: EventsParams): void {
 
       inp.parentElement?.addEventListener('wheel', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         let v = parseFloat(inp.value);
         v = e.deltaY < 0
           ? Math.min(v + AUDIO_UI.EQ_STEP, AUDIO_UI.EQ_MAX)
@@ -127,19 +130,46 @@ export function bindCardEvents(params: EventsParams): void {
       console.warn('Failed to get speed for preset save', e);
     }
 
-    chrome.storage.local.get(['siteSettings'], (r) => {
-      const s = (r.siteSettings as Record<string, AudioConfig>) || {};
-      s[domain] = state.config;
-      chrome.storage.local.set({ siteSettings: s }, () => {
-        // feedback: provide a transient visual confirmation on the save button
-        const old = ui.btnSave.innerText;
-        ui.btnSave.innerText = 'OK';
-        setTimeout(() => { ui.btnSave.innerText = old; }, TIMING.BUTTON_FEEDBACK_DURATION);
-      });
-    });
+    const result = await safeStorageGet<{ siteSettings?: Record<string, AudioConfig> }>(['siteSettings'], {});
+    const s = result.siteSettings || {};
+    s[domain] = state.config;
+    await safeStorageSet({ siteSettings: s });
+    // feedback: provide a transient visual confirmation on the save button
+    const old = ui.btnSave.innerText;
+    ui.btnSave.innerText = 'OK';
+    setTimeout(() => { ui.btnSave.innerText = old; }, TIMING.BUTTON_FEEDBACK_DURATION);
   };
 
-  ui.btnReset.onclick = () => update(DEFAULT_CONFIG);
+  // eff: save as global preset
+  if (ui.btnSaveGlobal) {
+    ui.btnSaveGlobal.onclick = async () => {
+      // eff: capture current playback speed
+      try {
+        const mediaState = await sendToTab<{ speed: number }>(tabId, 'MEDIA_GET_STATE', {});
+        if (mediaState && mediaState.speed) {
+          state.config.speed = mediaState.speed;
+        }
+      } catch (e) {
+        console.warn('Failed to get speed for global preset save', e);
+      }
 
-  bindMediaControls(ui, tabId, (speed) => update({ speed }));
+      // eff: prompt for preset name
+      const { getCurrentDict } = await import('../views/i18n-apply');
+      const dict = getCurrentDict();
+      const name = prompt(dict?.presetSaveGlobalPrompt || 'Enter preset name:', domain);
+      if (!name) return;
+
+      const { saveGlobalPreset } = await import('../views/presets-ui');
+      await saveGlobalPreset(name, state.config);
+
+      // feedback
+      const old = ui.btnSaveGlobal!.innerText;
+      ui.btnSaveGlobal!.innerText = 'OK';
+      setTimeout(() => { ui.btnSaveGlobal!.innerText = old; }, TIMING.BUTTON_FEEDBACK_DURATION);
+    };
+  }
+
+  ui.btnReset.onclick = () => update(DEFAULT_AUDIO_CONFIG);
+
+  bindMediaControls(ui, tabId, (changes) => update(changes));
 }

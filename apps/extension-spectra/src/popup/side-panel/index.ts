@@ -5,6 +5,7 @@ import { bindSidePanelControls, syncSidePanelState } from './controls';
 import { bindVideoControls, setVideoControlTabId } from './video-controls';
 import { bindFooterActions } from './footer-actions';
 import { getCardRegistration as getCardReg, updateCardConfig as updateReg } from './registry';
+import { safeStorageGet, safeStorageSet } from '../../shared/safe-storage';
 
 export { registerCard, getCardRegistration } from './registry';
 
@@ -51,10 +52,10 @@ export function initSidePanel(): void {
 		btnClose: panel.querySelector('.btn-close-panel') as HTMLElement,
 	};
 
-	elements.btnPin?.addEventListener('click', () => {
+	elements.btnPin?.addEventListener('click', async () => {
 		state.isPinned = !state.isPinned;
 		elements?.btnPin.classList.toggle('active', state.isPinned);
-		chrome.storage.local.set({ sidePanelPinned: state.isPinned });
+		await safeStorageSet({ sidePanelPinned: state.isPinned });
 	});
 
 	elements.btnClose?.addEventListener('click', () => closeSidePanel());
@@ -68,8 +69,8 @@ export function initSidePanel(): void {
 		}
 	});
 
-	chrome.storage.local.get(['sidePanelPinned'], (r) => {
-		state.isPinned = r.sidePanelPinned ?? false;
+	safeStorageGet<{ sidePanelPinned?: boolean }>(['sidePanelPinned'], {}).then(result => {
+		state.isPinned = result.sidePanelPinned ?? false;
 		elements?.btnPin.classList.toggle('active', state.isPinned);
 	});
 

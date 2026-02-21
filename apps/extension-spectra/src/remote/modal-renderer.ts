@@ -6,6 +6,7 @@
 
 import { Actions } from '@nexus/contracts';
 import type { I18NDict } from '../popup/types';
+import { getRemoteUrl } from './constants.js';
 
 let isModalOpen = false;
 let statusInterval: number | null = null;
@@ -34,7 +35,7 @@ export function renderRemoteModal(qrDataUrl: string, sessionId: string, isConnec
 	modal.id = 'remote-modal';
 	modal.className = 'remote-modal';
 
-	const remoteUrl = `https://nexus-remote.pages.dev/?s=${sessionId}`;
+	const remoteUrl = getRemoteUrl(sessionId);
 
 	modal.innerHTML = `
 		<div class="remote-modal-content">

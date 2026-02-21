@@ -55,13 +55,13 @@
 
 ```bash
 # Install dependencies
-pnpm install
+bun install
 
 # Build
-pnpm build
+bun run build
 
 # Development mode
-pnpm dev
+bun run dev
 ```
 
 ## Tech Stack
@@ -70,7 +70,7 @@ pnpm dev
 - **TypeScript** - Type-safe codebase
 - **WebAudio API** - Professional audio processing
 - **WebRTC** - Peer-to-peer remote control
-- **Monorepo** - pnpm + Turborepo
+- **Monorepo** - Bun + Turborepo
 
 ## Privacy
 

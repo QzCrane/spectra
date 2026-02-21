@@ -3,12 +3,10 @@
  */
 
 import QRCode from 'qrcode';
-
-const DEFAULT_REMOTE_URL = 'https://nexus-remote.pages.dev';
+import { REMOTE_HOST, getRemoteUrl } from './constants.js';
 
 export async function generateRemoteQR(sessionId: string, baseUrl?: string): Promise<string> {
-	const base = baseUrl || DEFAULT_REMOTE_URL;
-	const url = `${base}?s=${sessionId}`;
+	const url = baseUrl ? `${baseUrl}?s=${sessionId}` : getRemoteUrl(sessionId);
 
 	return QRCode.toDataURL(url, {
 		width: 200,
@@ -22,6 +20,5 @@ export async function generateRemoteQR(sessionId: string, baseUrl?: string): Pro
 
 // For debugging
 export async function generateRemoteQRText(sessionId: string): Promise<string> {
-	const url = `${DEFAULT_REMOTE_URL}?s=${sessionId}`;
-	return QRCode.toString(url, { type: 'terminal', small: true });
+	return QRCode.toString(getRemoteUrl(sessionId), { type: 'terminal', small: true });
 }

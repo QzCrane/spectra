@@ -3,6 +3,7 @@
 import type { HotkeySettings, HotkeyAction } from '@nexus/contracts';
 import { HOTKEY_ACTIONS, DEFAULT_HOTKEY_SETTINGS } from '@nexus/contracts';
 import { t, getActionName, getCurrentLang, onLangChange } from './i18n';
+import { safeStorageGet, safeStorageSet } from '../shared/safe-storage';
 
 // note: PRESET_COMMANDS must match the specific shortcut keys defined in the manifest; they cannot be renamed but their actions can be changed
 const PRESET_COMMANDS = ['volume_up', 'volume_down', 'toggle_mute', 'speed_up'];
@@ -19,15 +20,15 @@ export async function initSlotsEditor(): Promise<void> {
 
 async function loadSettings(): Promise<void> {
 	try {
-		const result = await chrome.storage.local.get('hotkeySettings');
+		const result = await safeStorageGet<{ hotkeySettings?: HotkeySettings }>(['hotkeySettings'], {});
 		if (result.hotkeySettings) {
 			settings = { ...DEFAULT_HOTKEY_SETTINGS, ...result.hotkeySettings };
 		}
-	} catch { /* ignore */ }
+	} catch { }
 }
 
 async function saveSettings(): Promise<void> {
-	await chrome.storage.local.set({ hotkeySettings: settings });
+	await safeStorageSet({ hotkeySettings: settings });
 }
 
 // eff: generates the UI list for both preset and generic command slots, populating them with localized action names

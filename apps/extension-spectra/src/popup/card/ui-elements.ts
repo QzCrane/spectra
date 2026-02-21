@@ -25,6 +25,7 @@ export function getCardUIElements(card: HTMLElement): CardUIElements {
     eqVals: card.querySelectorAll('.eq-val-display') as NodeListOf<HTMLElement>,
     btnSave: card.querySelector('.btn-save') as HTMLElement,
     btnReset: card.querySelector('.btn-reset') as HTMLElement,
+    btnSaveGlobal: card.querySelector('.btn-save-global'),
     canvas: card.querySelector('.viz-canvas') as HTMLCanvasElement,
     sliderArea: card.querySelector('.slider-rail-container') as HTMLElement,
     tComp: card.querySelector('[data-i18n="comp"]') as HTMLElement,

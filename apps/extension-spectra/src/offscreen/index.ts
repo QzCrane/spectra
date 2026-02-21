@@ -9,7 +9,7 @@ interface AudioProcessor {
 	ctx: AudioContext; stream: MediaStream; gain: GainNode; bass: BiquadFilterNode;
 	comp: DynamicsCompressorNode; eqNodes: BiquadFilterNode[]; panner: StereoPannerNode;
 	delayNode: DelayNode; analyser: AnalyserNode;
-	vizBuffer: Uint8Array; // eff: pre-allocated buffer
+	vizBuffer: Uint8Array<ArrayBuffer>; // eff: pre-allocated buffer
 }
 
 const processors = new Map<number, AudioProcessor>();
@@ -23,10 +23,9 @@ chrome.runtime.onMessage.addListener((msg, _, sendResponse) => {
 		case OffscreenActions.OFFSCREEN_GET_VIZ: {
 			const p = processors.get(msg.tabId);
 			if (p?.analyser) {
-				p.analyser.getByteFrequencyData(p.vizBuffer as any);
-				// eff: send copy required for IPC serialization anyway, but avoid local alloc if possible.
-				// IPC handles ArrayBuffer views efficiently.
-				sendResponse({ buffer: Array.from(p.vizBuffer) });
+				p.analyser.getByteFrequencyData(p.vizBuffer);
+				// eff: send TypedArray directly - IPC serializes ArrayBuffer efficiently
+				sendResponse({ buffer: p.vizBuffer });
 			} else {
 				sendResponse({ buffer: null });
 			}
@@ -53,7 +52,7 @@ async function startCapture(tabId: number, streamId: string, config: AudioConfig
 		const comp = ctx.createDynamicsCompressor();
 		const analyser = ctx.createAnalyser();
 		analyser.fftSize = AudioParams.FFT_SIZE;
-		const vizBuffer = new Uint8Array(analyser.frequencyBinCount);
+		const vizBuffer = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
 
 		const eqNodes: BiquadFilterNode[] = [];
 		for (const f of AudioParams.EQ_FREQUENCIES) {

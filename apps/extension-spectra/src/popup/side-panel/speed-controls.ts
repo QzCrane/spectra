@@ -1,6 +1,6 @@
 // goal: manages video playback speed controls in the side panel with cross-card synchronization
 
-import { sendToTab } from '../utils/dom';
+import type { AudioConfig } from '@nexus/kernel';
 
 interface SpeedControls {
 	speedSlider: HTMLInputElement | null;
@@ -26,20 +26,19 @@ export function addWheelSupport(
 	}, { passive: false });
 }
 
-// eff: binds side panel speed slider and input to the current tab's content script, ensuring bidirectional UI sync
-export function bindSpeedControls(c: SpeedControls, tabId: number): void {
-	const updateSpeed = async (speed: number) => {
+// eff: binds side panel speed slider and input to the update function, using unified config flow
+// note: speed now uses same update flow as volume - through updateFn instead of direct MEDIA_SET_SPEED
+export function bindSpeedControls(c: SpeedControls, updateFn: (changes: Partial<AudioConfig>) => void, initialSpeed: number = 1): void {
+	const updateSpeed = (speed: number) => {
 		const clampedSpeed = Math.max(0.25, Math.min(16, speed));
-		const res = await sendToTab<{ speed: number }>(tabId, 'MEDIA_SET_SPEED', { speed: clampedSpeed });
-		if (res) {
-			if (c.speedSlider) c.speedSlider.value = String(res.speed);
-			if (c.speedInput) c.speedInput.value = res.speed.toFixed(2);
-			syncCardSpeedInput(res.speed);
-		}
+		if (c.speedSlider) c.speedSlider.value = String(clampedSpeed);
+		if (c.speedInput) c.speedInput.value = clampedSpeed.toFixed(2);
+		syncCardSpeedInput(clampedSpeed);
+		updateFn({ speed: clampedSpeed });
 	};
 
 	if (c.speedSlider) {
-		c.speedSlider.value = '1';
+		c.speedSlider.value = String(initialSpeed);
 		c.speedSlider.oninput = (e) => {
 			const speed = parseFloat((e.target as HTMLInputElement).value);
 			if (c.speedInput) c.speedInput.value = speed.toFixed(2);
@@ -52,7 +51,7 @@ export function bindSpeedControls(c: SpeedControls, tabId: number): void {
 	}
 
 	if (c.speedInput) {
-		c.speedInput.value = '1.00';
+		c.speedInput.value = initialSpeed.toFixed(2);
 		c.speedInput.onchange = (e) => {
 			const speed = parseFloat((e.target as HTMLInputElement).value) || 1;
 			updateSpeed(speed);

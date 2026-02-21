@@ -3,7 +3,6 @@
 export { initCard } from './init';
 
 export {
-  DEFAULT_CONFIG,
   cleanConfig,
   type CardInternalState,
   type CardContext,

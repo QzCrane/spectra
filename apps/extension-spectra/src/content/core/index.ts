@@ -23,6 +23,7 @@ import {
   cleanupIntervals,
 } from './lifecycle';
 import { initHotkeyListener, setConfigGetter, setConfigUpdater } from '../input/hotkey-listener';
+import { initYouTubeAdapter } from '../adapters/youtube-adapter';
 
 const log = logger.content;
 
@@ -123,6 +124,12 @@ async function initSpectra(): Promise<void> {
   setConfigGetter(() => state.config);
   setConfigUpdater((changes, options) => policyExecutor.updateConfig(changes, options));
 
+  // eff: listen for playbackRate changes from injector (universal player support)
+  setupPlaybackRateListener(state, policyExecutor);
+
+  // eff: initialize YouTube adapter to listen for injector responses
+  initYouTubeAdapter();
+
   initHotkeyListener().then(cleanup => { cleanupHotkeys = cleanup; });
 
   loadConfigAndApply(messenger, state, settingsManager, policyExecutor);
@@ -156,4 +163,25 @@ async function loadConfigAndApply(
   } catch {
     // note: failure indicates background worker is likely offline or restarting
   }
+}
+
+// eff: listen for playbackRate changes from injector (universal player support)
+// note: this enables bidirectional sync with custom players (YouTube, Netflix, etc.)
+function setupPlaybackRateListener(
+  state: PolicyExecutorState,
+  policyExecutor: import('../logic/policy-executor').PolicyExecutor
+): void {
+  window.addEventListener('message', (event) => {
+    if (event.data?.type === 'SPECTRA_RATE') {
+      const newSpeed = event.data.speed;
+
+      // Avoid trivial updates
+      if (Math.abs((state.config.speed || 1) - newSpeed) < 0.05) return;
+
+      log.debug(`[Universal] External speed change: ${newSpeed}x`);
+
+      // Update config as native sync (don't trigger re-application)
+      policyExecutor.updateConfig({ speed: newSpeed }, { isNativeSync: true });
+    }
+  });
 }

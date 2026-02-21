@@ -1,13 +1,13 @@
 // goal: routes media and video-related messages from the background script to specialized content handlers
 
 import { Actions } from '@nexus/contracts';
-import { togglePlay, togglePip, setSpeed, adjustSpeed, getMediaState, seekVideo } from './media-control';
+import { togglePlay, togglePip, getMediaState, seekVideo } from './media-control';
 import { rotateVideo, toggleMirror, takeScreenshot, toggleFullscreen, toggleCrop } from '../video/video-transform';
 import { setVideoFilter, resetVideoFilter, toggleDimBackground } from '../video/video-filter';
 import { setPointA, setPointB, clearABLoop, getABState } from '../video/ab-loop';
 import { addMarker, removeMarker, jumpToMarker, listMarkers } from '../video/time-marker';
 
-type MsgPayload = { speed?: number; delta?: number; brightness?: number; contrast?: number; saturate?: number; grayscale?: boolean; invert?: boolean } | undefined;
+type MsgPayload = { delta?: number; brightness?: number; contrast?: number; saturate?: number; grayscale?: boolean; invert?: boolean } | undefined;
 
 // eff: executes media/video actions based on the provided Action type and dispatches results via sendResponse
 // post: returns true if the action was recognized and handled within this module
@@ -30,14 +30,7 @@ export function handleMediaMessage(
 			return true;
 		}
 
-		case Actions.MEDIA_SET_SPEED: {
-			const sp = payload as { speed?: number; delta?: number; preservePitch?: boolean } | undefined;
-			const result = sp?.delta !== undefined
-				? adjustSpeed(sp.delta)
-				: setSpeed(sp?.speed ?? 1, sp?.preservePitch);
-			sendResponse(result);
-			return true;
-		}
+		// note: MEDIA_SET_SPEED is handled in message-handler.ts via unified config flow
 
 		case Actions.MEDIA_GET_STATE: {
 			sendResponse(getMediaState());

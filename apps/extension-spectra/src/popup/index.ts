@@ -4,11 +4,9 @@ import { $, isRestrictedUrl } from './utils';
 import { initNavigation } from './views/navigation';
 import { initSettings } from './views/settings';
 import { initCard } from './card';
-import { createEqCurveDrawer } from './visualizer';
 import { createMessenger } from '@nexus/kernel';
-import { initSidePanel } from './side-panel';
-import { bindRemoteUI } from '../remote';
 import { enableSmoothScroll } from '../shared/smooth-scroll';
+import type { EqCurveDrawerFactory } from './card/types';
 
 // eff: bootstraps the popup UI by identifying active tabs, loading settings, and rendering control cards
 async function main(): Promise<void> {
@@ -25,11 +23,15 @@ async function main(): Promise<void> {
   }
 
   initNavigation();
-  initSidePanel();
 
   const { gSettings, registryEntries, dict } = await initSettings();
 
+  // eff: lazy load side panel only when needed
+  const { initSidePanel } = await import('./side-panel');
+  initSidePanel();
+
   if (activeTab?.id) {
+    const { bindRemoteUI } = await import('../remote');
     bindRemoteUI(activeTab.id, dict);
   }
 
@@ -67,6 +69,9 @@ async function main(): Promise<void> {
       // note: fail silently if the content script is not yet injected or compatible
     }
 
+    // eff: lazy load visualizer only when needed
+    const { createEqCurveDrawer } = await import('./visualizer');
+
     const mainCardSuccess = await initCard({
       container: mainStage,
       template,
@@ -84,6 +89,9 @@ async function main(): Promise<void> {
 
   let hasBgAudio = false;
 
+  // eff: lazy load visualizer for background cards
+  let bgEqDrawer: EqCurveDrawerFactory | undefined;
+
   try {
     // goal: render cards for other tabs that were recently audibly active to allow multi-tab management
     const result = await messenger.send('TAB_GET_VISIBLE_TABS');
@@ -97,6 +105,11 @@ async function main(): Promise<void> {
       const tab = tabMap.get(tabId);
       if (!tab || isRestrictedUrl(tab.url)) continue;
 
+      if (!bgEqDrawer) {
+        const { createEqCurveDrawer } = await import('./visualizer');
+        bgEqDrawer = createEqCurveDrawer;
+      }
+
       const success = await initCard({
         container: bgStack,
         template,
@@ -104,7 +117,7 @@ async function main(): Promise<void> {
         dict,
         registryEntries,
         getGlobalSettings,
-        createEqCurveDrawer,
+        createEqCurveDrawer: bgEqDrawer,
         isBackground: true,
       });
 
@@ -122,6 +135,11 @@ async function main(): Promise<void> {
       if (activeTab && tab.id === activeTab.id) continue;
       if (isRestrictedUrl(tab.url)) continue;
 
+      if (!bgEqDrawer) {
+        const { createEqCurveDrawer } = await import('./visualizer');
+        bgEqDrawer = createEqCurveDrawer;
+      }
+
       const success = await initCard({
         container: bgStack,
         template,
@@ -129,7 +147,7 @@ async function main(): Promise<void> {
         dict,
         registryEntries,
         getGlobalSettings,
-        createEqCurveDrawer,
+        createEqCurveDrawer: bgEqDrawer,
         isBackground: true,
       });
 

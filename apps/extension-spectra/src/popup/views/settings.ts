@@ -9,6 +9,8 @@ import { applyTheme, THEME_ICONS, getNextThemeMode } from '../utils/theme';
 import { migrateRegistry } from '../utils/registry-helpers';
 import { TIMING } from '../constants';
 import { applyLang, updateCardsI18n } from './i18n-apply';
+import { safeStorageGet, safeStorageSet } from '../../shared/safe-storage';
+import { DEFAULT_GLOBAL_SETTINGS } from '@nexus/kernel';
 import { initRegistryUI, updateRegistryI18n } from './registry-ui';
 import { initPresetsUI, updatePresetsI18n } from './presets-ui';
 import { updateRemoteI18n } from '../../remote';
@@ -22,23 +24,18 @@ export interface SettingsState {
 // cardRenderCallbacks: registry of UI update hooks triggered when global settings (like visualization toggle) change
 export const cardRenderCallbacks: RenderCallback[] = [];
 
-const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
-  osdEnabled: true,
-  visualizerEnabled: true,
-  lang: 'en-US',
-  themeMode: 'system',
-  pauseRetentionSeconds: 60,
-};
-
 // post: loads settings from local storage, initializes the side-panel UI, and returns the unified state
 export async function initSettings(): Promise<SettingsState> {
   const ui = getSettingsUIElements();
 
-  // Load settings: maintains compatibility with both modern 'globalSettings' and legacy individual registry keys
-  const storage = await chrome.storage.local.get(['globalSettings', 'restrictedRegistry', 'userRegistry']);
-  let gSettings: GlobalSettings = storage.globalSettings || { ...DEFAULT_GLOBAL_SETTINGS };
+  const result = await safeStorageGet<{
+    globalSettings?: GlobalSettings;
+    restrictedRegistry?: DomainEntry[];
+    userRegistry?: DomainEntry[];
+  }>(['globalSettings', 'restrictedRegistry', 'userRegistry'], {});
 
-  let registryEntries: DomainEntry[] = migrateRegistry(storage.restrictedRegistry || storage.userRegistry);
+  let gSettings: GlobalSettings = result.globalSettings || { ...DEFAULT_GLOBAL_SETTINGS };
+  let registryEntries: DomainEntry[] = migrateRegistry(result.restrictedRegistry || result.userRegistry);
 
   initUIState(ui, gSettings, registryEntries);
 
@@ -61,7 +58,7 @@ export async function initSettings(): Promise<SettingsState> {
     const btnTheme = $<HTMLButtonElement>('btn-theme');
     if (btnTheme) btnTheme.textContent = THEME_ICONS[gSettings.themeMode];
 
-    chrome.storage.local.set({ globalSettings: gSettings });
+    safeStorageSet({ globalSettings: gSettings });
     broadcastSettings(gSettings);
 
     // eff: cascade i18n updates across all UI components (Cards, Registry, Presets, Remote)
@@ -136,7 +133,7 @@ function bindThemeButtonEvent(
     btnTheme.textContent = THEME_ICONS[nextMode];
     const selTheme = $<HTMLSelectElement>('set-theme');
     if (selTheme) selTheme.value = nextMode;
-    chrome.storage.local.set({ globalSettings: updated });
+    safeStorageSet({ globalSettings: updated });
   };
 }
 

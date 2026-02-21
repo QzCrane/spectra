@@ -3,7 +3,7 @@
 export { COLORS, EQ_GRADIENT } from './colors';
 export type { ColorKey } from './colors';
 
-export { AUDIO_UI, DEFAULT_EQ_VALUES } from './audio';
+export { AUDIO_UI } from './audio';
 
 export { TIMING, UI_SIZES, VIZ_PARAMS } from './timing';
 

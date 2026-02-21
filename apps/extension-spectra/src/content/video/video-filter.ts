@@ -1,6 +1,7 @@
 // goal: Video brightness, contrast, saturation, grayscale, invert using CSS filters
 
 import { createLogger } from '../../shared/logger';
+import { getPrimaryVideo } from '../utils/media-utils';
 
 const log = createLogger('VideoFilter');
 
@@ -12,22 +13,6 @@ function getState(v: HTMLVideoElement): FilterState {
 	let s = fMap.get(v);
 	if (!s) { s = { ...DEF }; fMap.set(v, s); }
 	return s;
-}
-
-function getPrimary(): HTMLVideoElement | null {
-	const v = document.getElementsByTagName('video');
-	let best: HTMLVideoElement | null = null;
-	let maxA = 0;
-	// eff: Safe live collection iteration
-	for (let i = 0, l = v.length; i < l; i++) {
-		const el = v[i];
-		if (!el) continue;
-		const r = el.getBoundingClientRect();
-		const a = r.width * r.height;
-		if (a > maxA) { maxA = a; best = el; }
-	}
-	// eff: return best or first (fallback) checking existence
-	return best || (v.length > 0 ? v[0]! : null);
 }
 
 function apply(v: HTMLVideoElement) {
@@ -43,7 +28,7 @@ function apply(v: HTMLVideoElement) {
 }
 
 export function setVideoFilter(p: { brightness?: number; contrast?: number; saturate?: number; grayscale?: boolean; invert?: boolean }): boolean {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return false;
 	const s = getState(v);
 	if (p.brightness !== undefined) s.b = Math.max(0, Math.min(200, p.brightness));
@@ -56,7 +41,7 @@ export function setVideoFilter(p: { brightness?: number; contrast?: number; satu
 }
 
 export function resetVideoFilter(): boolean {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return false;
 	fMap.set(v, { ...DEF });
 	apply(v);
@@ -67,7 +52,7 @@ const DIM_ID = 'spectra-dim-overlay';
 let dim = { act: false, op: 0.7 };
 
 export function toggleDimBackground(p?: { enabled?: boolean; opacity?: number }): { active: boolean; opacity: number } {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return { active: dim.act, opacity: dim.op };
 
 	if (p?.enabled !== undefined) dim.act = p.enabled;

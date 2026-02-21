@@ -88,6 +88,22 @@ export interface I18NDict {
 	presetsHint: string;
 	btnClearPresets: string;
 
+	// note: enhanced preset management
+	presetSearchPlaceholder: string;
+	presetGlobalSection: string;
+	presetSiteSection: string;
+	presetDefaultBadge: string;
+	presetCurrentBadge: string;
+	presetApplyTooltip: string;
+	presetPreviewTooltip: string;
+	presetSetDefaultTooltip: string;
+	presetRemoveDefaultTooltip: string;
+	presetDeleteTooltip: string;
+	presetAppliedToast: (name: string) => string;
+	btnClose: string;
+	btnSaveAsGlobal: string;
+	presetSaveGlobalPrompt: string;
+
 	// note: remote synchronization and mobile connection UI
 	btnRemoteTooltip: string;
 	remoteModalTitle: string;

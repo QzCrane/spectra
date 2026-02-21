@@ -1,6 +1,7 @@
 // goal: manages transient in-page time markers for quick navigation within video elements
 
 import { createLogger } from '../../shared/logger';
+import { getPrimaryVideo } from '../utils/media-utils';
 
 const log = createLogger('Marker');
 
@@ -10,7 +11,6 @@ interface TimeMarker {
 	label: string;
 }
 
-// markers: volatile list of user-defined timestamps; reset on page reload
 const markers: TimeMarker[] = [];
 
 function generateId(): string {
@@ -21,23 +21,6 @@ function formatTime(seconds: number): string {
 	const m = Math.floor(seconds / 60);
 	const s = Math.floor(seconds % 60);
 	return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-// post: returns the largest visible video element on the page, or the first available video as fallback
-function getPrimaryVideo(): HTMLVideoElement | null {
-	const v = document.getElementsByTagName('video');
-	let best: HTMLVideoElement | null = null;
-	let maxA = 0;
-	// eff: Safe live collection iteration
-	for (let i = 0, l = v.length; i < l; i++) {
-		const el = v[i];
-		if (!el) continue;
-		const r = el.getBoundingClientRect();
-		const a = r.width * r.height;
-		if (a > maxA) { maxA = a; best = el; }
-	}
-	// eff: Safe return
-	return best || (v.length > 0 ? v[0]! : null);
 }
 
 // eff: captures timestamps

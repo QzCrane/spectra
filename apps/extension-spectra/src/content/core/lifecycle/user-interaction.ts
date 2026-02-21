@@ -3,6 +3,7 @@
 
 import { AudioMode, WebAudioController } from '@nexus/audio-engine';
 import { logger } from '../../../shared/logger';
+import { getPrimaryMedia } from '../../utils/media-utils';
 import type { PolicyExecutorState } from '../../types';
 import type { PolicyExecutor } from '../../logic/policy-executor';
 
@@ -51,11 +52,10 @@ export function setupPopupConnectionListener(state: PolicyExecutorState, onPopup
 }
 
 function syncDomVolumeToState(state: PolicyExecutorState): void {
-	const media = document.getElementsByTagName('video')[0] || document.getElementsByTagName('audio')[0];
+	const media = getPrimaryMedia();
 	if (!media) return;
 
 	if (!state.userHasInteracted) {
-		// rule: update ONLY volume for UI display, preserve plugin's muted state (prevent site-mute pollution)
 		state.config.volume = (media.volume * 100) | 0;
 	}
 }

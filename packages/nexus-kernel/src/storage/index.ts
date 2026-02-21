@@ -9,3 +9,5 @@ export {
 	removeTabSessionConfig,
 	hasTabSessionConfig,
 } from './tab-session.js';
+export { safeStorageGet, safeStorageSet, safeStorageRemove } from './safe-storage.js';
+export type { StorageArea } from './safe-storage.js';

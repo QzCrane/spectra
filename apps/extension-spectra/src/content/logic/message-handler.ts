@@ -11,7 +11,8 @@ import { Actions } from '@nexus/contracts';
 import { PolicyExecutor, PolicyExecutorState } from './policy-executor';
 import { CaptureManager } from '../audio/capture-manager';
 import { SettingsManager } from '../core/settings-manager';
-import { hasMediaElements, isAnyMediaPlaying, getPausedAt } from '../audio/dom-volume';
+import { isAnyMediaPlaying, hasMediaElements } from '../audio/media-detection';
+import { getPausedAt } from '../utils/pause-tracker';
 import { safeSend } from '../core/context-guard';
 import { handleMediaMessage } from './media-message-handler';
 import { executeHotkeyAction } from '../input/hotkey-actions';
@@ -21,7 +22,7 @@ export interface MessageHandlerDeps {
 	policyExecutor: PolicyExecutor;
 	captureManager: CaptureManager;
 	settingsManager: SettingsManager;
-	getVisualizerData: () => number[] | null;
+	getVisualizerData: () => Uint8Array | null;
 }
 
 /**
@@ -62,7 +63,9 @@ export function createMessageHandler(deps: MessageHandlerDeps): (
 
 				delete (configChanges as any).isNativeSync;
 
-				policyExecutor.updateConfig(configChanges, { isNativeSync });
+				// note: show OSD for remote control commands (volumeDelta/toggleMute indicate remote/hotkey)
+				const isRemoteCommand = payload.config.volumeDelta !== undefined || payload.config.toggleMute !== undefined;
+				policyExecutor.updateConfig(configChanges, { isNativeSync, showOSD: isRemoteCommand });
 				sendResponse({
 					success: true,
 					state: {
@@ -95,7 +98,8 @@ export function createMessageHandler(deps: MessageHandlerDeps): (
 			}
 
 			case Actions.AUDIO_GET_VISUALIZER: {
-				sendResponse({ buffer: getVisualizerData() });
+				const vizData = getVisualizerData();
+				sendResponse({ buffer: vizData ? vizData.buffer : null });
 				break;
 			}
 
@@ -137,6 +141,20 @@ export function createMessageHandler(deps: MessageHandlerDeps): (
 
 
 
+
+			case Actions.MEDIA_SET_SPEED: {
+				// note: speed control now uses unified config flow through policyExecutor
+				const sp = msg.payload as { speed?: number; delta?: number; preservePitch?: boolean } | undefined;
+				let newSpeed: number;
+				if (sp?.delta !== undefined) {
+					newSpeed = Math.max(0.1, Math.min(16, (deps.state.config.speed || 1) + sp.delta));
+				} else {
+					newSpeed = Math.max(0.1, Math.min(16, sp?.speed ?? 1));
+				}
+				policyExecutor.updateConfig({ speed: newSpeed }, { showOSD: true });
+				sendResponse({ speed: newSpeed, preservePitch: sp?.preservePitch ?? true });
+				break;
+			}
 
 			default: {
 				// delegate playback messages to the specialized handler

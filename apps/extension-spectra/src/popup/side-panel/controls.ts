@@ -50,6 +50,7 @@ function getControls(): SidePanelControls {
 }
 
 // eff: binds all side panel sliders, inputs, and switches to the provided update function for a specific tab
+// note: speed controls now use unified updateFn flow (same as volume/pan/delay)
 export function bindSidePanelControls(
 	config: AudioConfig,
 	updateFn: (changes: Partial<AudioConfig>) => void,
@@ -59,7 +60,7 @@ export function bindSidePanelControls(
 	const c = getControls();
 
 	bindAudioChips(c, config, updateFn);
-	bindSpeedControls(c, tabId);
+	bindSpeedControls(c, updateFn, config.speed ?? 1);
 	bindPanControl(c, config, updateFn);
 	bindDelayControl(c, config, updateFn);
 	bindEq(c, config, updateFn);

@@ -4,10 +4,19 @@ import type { I18NDict } from '../types';
 import { $$ } from '../utils/dom';
 import { getDict } from '../constants';
 
+// perf: cache current dictionary for access from other modules
+let currentDictCache: I18NDict | null = null;
+
+// eff: gets the current i18n dictionary
+export function getCurrentDict(): I18NDict | null {
+	return currentDictCache;
+}
+
 // eff: iterates through all elements with data-i18n attributes and replaces their text/titles/placeholders with localized strings
 export function applyLang(lang: string): I18NDict {
 	const dict = getDict(lang);
 	if (!dict) return getDict('en-US')!;
+	currentDictCache = dict;
 
 	$$<HTMLElement>('[data-i18n]').forEach((el) => {
 		const key = el.dataset.i18n as keyof I18NDict;
@@ -48,8 +57,10 @@ export function updateCardsI18n(dict: I18NDict, vizEnabled: boolean): void {
 
 		const btnSave = card.querySelector('.btn-save') as HTMLElement | null;
 		const btnReset = card.querySelector('.btn-reset') as HTMLElement | null;
+		const btnSaveGlobal = card.querySelector('.btn-save-global') as HTMLElement | null;
 		if (btnSave) btnSave.title = dict.saveTooltip;
 		if (btnReset) btnReset.title = dict.resetTooltip;
+		if (btnSaveGlobal) btnSaveGlobal.title = dict.btnSaveAsGlobal;
 
 		const btnPause = card.querySelector('.btn-pause') as HTMLElement | null;
 		const btnPip = card.querySelector('.btn-pip') as HTMLElement | null;

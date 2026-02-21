@@ -180,14 +180,14 @@ export class WebAudioController {
 		});
 	}
 
-	getVisualizerData(): number[] | null {
+	getVisualizerData(): Uint8Array | null {
 		if (!this.ctx) return null;
 		for (const el of document.querySelectorAll('video, audio')) {
 			const m = el as AudioMediaElement;
 			if (m._vm?.analyser) {
 				const data = new Uint8Array(m._vm.analyser.frequencyBinCount);
 				m._vm.analyser.getByteFrequencyData(data);
-				return data as unknown as number[];
+				return data;
 			}
 		}
 		return null;

@@ -3,10 +3,10 @@
 
 import { createLogger } from '../../shared/logger';
 import { simulateMouseHover } from '../utils/focus-helper';
+import { getPrimaryVideo } from '../utils/media-utils';
 
 const log = createLogger('VideoTransform');
 
-// eff: WeakMaps for per-element state
 const tfState = new WeakMap<HTMLVideoElement, { r: number; m: boolean }>();
 const cpState = new WeakMap<HTMLVideoElement, boolean>();
 
@@ -14,21 +14,6 @@ function getState(v: HTMLVideoElement): { r: number; m: boolean } {
 	let s = tfState.get(v);
 	if (!s) { s = { r: 0, m: false }; tfState.set(v, s); }
 	return s;
-}
-
-// eff: duplicative logic with media-control, but keep isolated for now
-function getPrimary(): HTMLVideoElement | null {
-	const v = document.getElementsByTagName('video');
-	let best: HTMLVideoElement | null = null;
-	let maxA = 0;
-	for (let i = 0, l = v.length; i < l; i++) {
-		const el = v[i];
-		if (!el) continue;
-		const rect = el.getBoundingClientRect();
-		const a = rect.width * rect.height;
-		if (a > maxA) { maxA = a; best = el; }
-	}
-	return best || (v.length > 0 ? v[0]! : null);
 }
 
 function apply(v: HTMLVideoElement) {
@@ -41,7 +26,7 @@ function apply(v: HTMLVideoElement) {
 }
 
 export function rotateVideo(): number {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return 0;
 	const s = getState(v);
 	s.r = (s.r + 90) % 360;
@@ -50,7 +35,7 @@ export function rotateVideo(): number {
 }
 
 export function toggleMirror(): boolean {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return false;
 	const s = getState(v);
 	s.m = !s.m;
@@ -59,7 +44,7 @@ export function toggleMirror(): boolean {
 }
 
 export function takeScreenshot(): string | null {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return null;
 
 	try {
@@ -90,7 +75,7 @@ export function takeScreenshot(): string | null {
 }
 
 export async function toggleFullscreen(): Promise<boolean> {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return false;
 
 	try {
@@ -111,7 +96,7 @@ export async function toggleFullscreen(): Promise<boolean> {
 }
 
 export function toggleCrop(): boolean {
-	const v = getPrimary();
+	const v = getPrimaryVideo();
 	if (!v) return false;
 	const c = !(cpState.get(v) ?? false);
 	v.style.objectFit = c ? 'cover' : 'contain';

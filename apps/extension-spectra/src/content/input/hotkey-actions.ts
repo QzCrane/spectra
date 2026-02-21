@@ -9,12 +9,7 @@ import { addMarker } from '../video/time-marker';
 import { setPointA, setPointB, clearABLoop } from '../video/ab-loop';
 import { showToast } from '../ui/toast';
 import {
-	sendVolumeAction,
-	sendAudioReset,
-	sendCaptureToggle,
-	jumpMarker,
-	toggleLoop,
-	sendTabAction,
+	sendVolumeAction, sendSpeedAction, sendAudioReset, sendCaptureToggle, jumpMarker, toggleLoop, sendTabAction,
 } from './hotkey-helpers';
 
 export { setConfigGetter, setConfigUpdater } from './hotkey-helpers';
@@ -36,10 +31,12 @@ export function executeHotkeyAction(action: HotkeyAction, params?: HotkeyParams)
 		case 'seek_frame_forward': seekVideo(1 / 30); break;
 		case 'seek_frame_backward': seekVideo(-1 / 30); break;
 
-		case 'speed_up': adjustSpeed(params?.step ?? 0.1); break;
-		case 'speed_down': adjustSpeed(-(params?.step ?? 0.1)); break;
-		case 'speed_reset': setSpeed(1); break;
-		case 'speed_set': if (params?.speed) setSpeed(params.speed); break;
+		case 'speed_up':
+		case 'speed_down':
+		case 'speed_reset':
+		case 'speed_set':
+			sendSpeedAction(action, params);
+			break;
 
 		case 'volume_up':
 		case 'volume_down':
