@@ -174,9 +174,18 @@ function setupPlaybackRateListener(
   window.addEventListener('message', (event) => {
     if (event.data?.type === 'SPECTRA_RATE') {
       const newSpeed = event.data.speed;
+      const readyState = event.data.readyState ?? 4;
 
       // Avoid trivial updates
       if (Math.abs((state.config.speed || 1) - newSpeed) < 0.05) return;
+
+      // rule: GENERIC SOLUTION for implicit defaults overriding configs during SPA navigation/loading
+      // Natively, setting the video src initiates a media swap, during which scripts reset playbackRate to 1.0 (readyState < 2 HAVE_CURRENT_DATA)
+      // A genuine user interaction (via browser UI config to 1x) would only practically occur when video is buffering/playing (readyState >= 2)
+      if (newSpeed === 1 && readyState < 2) {
+        log.debug(`[Universal] Ignored programmatic script reset to 1x during media context swap`);
+        return;
+      }
 
       log.debug(`[Universal] External speed change: ${newSpeed}x`);
 

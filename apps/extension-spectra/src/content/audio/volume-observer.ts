@@ -167,6 +167,7 @@ export function setupVolumeMonitor(media: HTMLMediaElement, ctx: MonitorContext)
 	// perf: ratechange with RAF throttling
 	media.addEventListener('ratechange', () => {
 		if (hasFlag(s._flags, FLAG_SETTING_BY_PLUGIN)) return;
+
 		if (throttle.rafId !== 0) {
 			throttle.lastSpeed = media.playbackRate;
 			return;

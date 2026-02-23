@@ -138,7 +138,7 @@ export function hijackPlaybackRate(): void {
 				this[lastRateKey] = nr;
 				const d = nr - or;
 				if (d > DIFF_THRESHOLD || d < -DIFF_THRESHOLD) {
-					window.postMessage({ type: RATE_MSG_TYPE, speed: nr }, '*');
+					window.postMessage({ type: RATE_MSG_TYPE, speed: nr, readyState: this.readyState }, '*');
 				}
 			},
 			configurable: true,
@@ -156,7 +156,7 @@ export function hijackPlaybackRate(): void {
 				os.call(this, nr);
 				const d = nr - or;
 				if (d > DIFF_THRESHOLD || d < -DIFF_THRESHOLD) {
-					window.postMessage({ type: RATE_MSG_TYPE, speed: nr }, '*');
+					window.postMessage({ type: RATE_MSG_TYPE, speed: nr, readyState: this.readyState }, '*');
 				}
 			},
 			configurable: true,
