@@ -4,7 +4,7 @@
 
 import { createLogger } from '../../shared/logger';
 import { simulateMouseHover } from '../utils/focus-helper';
-import { isYouTube, setYouTubeSpeed } from '../adapters/youtube-adapter';
+import { getSiteBridge } from './site-bridge/registry';
 import { getElementState } from '../audio/volume-observer';
 import { getPrimaryVideo } from '../utils/media-utils';
 
@@ -175,9 +175,16 @@ export function setSpeed(s: number, pitch?: boolean): { speed: number; preserveP
 	const clamped = s < MIN_SPEED ? MIN_SPEED : s > MAX_SPEED ? MAX_SPEED : s;
 	const p = pitch ?? true;
 
-	if (isYouTube()) setYouTubeSpeed(clamped);
-	window.postMessage({ type: 'SPECTRA_TARGET_SPEED', speed: clamped }, '*');
-	schedule(clamped, p);
+	const bridge = getSiteBridge();
+	bridge.syncSpeed(clamped);
+
+	// rule: If bridge handles state sync (like YouTube), SKIP DOM property modification to avoid race conditions and loops
+	if (!bridge.shouldInhibitDomSync()) {
+		window.postMessage({ type: 'SPECTRA_TARGET_SPEED', speed: clamped }, '*');
+		schedule(clamped, p);
+	} else {
+		log.debug(`[MediaControl] DOM speed modification skipped (handled by ${bridge.id} bridge)`);
+	}
 
 	log.info(`Speed ${clamped}x, pitch=${p}`);
 	return { speed: clamped, preservePitch: p };

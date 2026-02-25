@@ -57,8 +57,12 @@ export class StorageRepository {
     ) => {
       if (areaName === 'local') callback(changes);
     };
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+
+    if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
+      chrome.storage.onChanged.addListener(listener);
+      return () => chrome.storage.onChanged.removeListener(listener);
+    }
+    return () => { };
   }
 }
 

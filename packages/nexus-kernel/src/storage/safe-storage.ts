@@ -43,6 +43,7 @@ export async function safeStorageGet<T extends Record<string, unknown>>(
 	defaults: T,
 	options: SafeStorageOptions = {}
 ): Promise<T> {
+	if (typeof chrome === 'undefined' || !chrome.storage) return defaults;
 	const { area = 'local', timeout = DEFAULT_TIMEOUT, retries = MAX_RETRIES } = options;
 	const storage = area === 'local' ? chrome.storage.local : chrome.storage.sync;
 	const keyArr = Array.isArray(keys) ? keys : [keys];
@@ -60,6 +61,7 @@ export async function safeStorageSet(
 	items: Record<string, unknown>,
 	options: SafeStorageOptions = {}
 ): Promise<boolean> {
+	if (typeof chrome === 'undefined' || !chrome.storage) return false;
 	const { area = 'local', timeout = DEFAULT_TIMEOUT, retries = MAX_RETRIES } = options;
 	const storage = area === 'local' ? chrome.storage.local : chrome.storage.sync;
 
@@ -76,6 +78,7 @@ export async function safeStorageRemove(
 	keys: string | string[],
 	options: SafeStorageOptions = {}
 ): Promise<boolean> {
+	if (typeof chrome === 'undefined' || !chrome.storage) return false;
 	const { area = 'local', timeout = DEFAULT_TIMEOUT, retries = MAX_RETRIES } = options;
 	const storage = area === 'local' ? chrome.storage.local : chrome.storage.sync;
 	const keyArr = Array.isArray(keys) ? keys : [keys];

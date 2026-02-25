@@ -1,7 +1,18 @@
 // goal: YouTube API integration for MAIN world (content script cannot access yt API)
 // theory: YouTube player API only accessible in MAIN world, use postMessage bridge
 
+let ytPlayer: any = null;
+
 export function initYouTubeAdapter(): void {
+	// rule: wait for movie_player to be available before attaching listeners
+	const checkInterval = setInterval(() => {
+		const yt = document.querySelector('#movie_player') as any;
+		if (yt && typeof yt.addEventListener === 'function') {
+			clearInterval(checkInterval);
+			attachPlayerListeners(yt);
+		}
+	}, 1000);
+
 	window.addEventListener('message', (event) => {
 		if (!event.data) return;
 		const { type, speed, volume, muted } = event.data;
@@ -13,8 +24,28 @@ export function initYouTubeAdapter(): void {
 	});
 }
 
+function attachPlayerListeners(yt: any): void {
+	ytPlayer = yt;
+	// note: YouTube player API events are strings, not standard DOM events
+	yt.addEventListener('onVolumeChange', (state: { volume: number; muted: boolean }) => {
+		// rule: report actual player state BACK to content script as an "authoritative" native change
+		window.postMessage({
+			type: 'SPECTRA_YT_SYNC_BACK',
+			volume: state.volume,
+			muted: state.muted
+		}, '*');
+	});
+
+	yt.addEventListener('onPlaybackRateChange', (rate: number) => {
+		window.postMessage({
+			type: 'SPECTRA_YT_SYNC_BACK',
+			speed: rate
+		}, '*');
+	});
+}
+
 function handleYtSpeed(rate: number): void {
-	const yt = document.querySelector('#movie_player') as any;
+	const yt = ytPlayer || document.querySelector('#movie_player') as any;
 	if (!yt || typeof yt.setPlaybackRate !== 'function') return;
 
 	try {
@@ -28,7 +59,7 @@ function handleYtSpeed(rate: number): void {
 }
 
 function handleYtVolume(volume: number, muted: boolean): void {
-	const yt = document.querySelector('#movie_player') as any;
+	const yt = ytPlayer || document.querySelector('#movie_player') as any;
 	if (!yt || typeof yt.setVolume !== 'function') return;
 
 	try {

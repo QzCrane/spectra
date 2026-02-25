@@ -40,7 +40,14 @@ export function updateConfig(
 	delete (newConfig as any).volumeDelta;
 
 	state.config = newConfig;
-	applyStateFn();
+
+	// rule: NEVER trigger applyState for a native sync update
+	// reason: applying state writes the current config BACK to the DOM/Injector;
+	// if we do this during a native sync, we create a feedback loop that causes volume drift/jitter
+	if (!options.isNativeSync) {
+		applyStateFn();
+	}
+
 	updateBadge(deps, state, internalState);
 
 	if (options.showOSD) {

@@ -80,8 +80,8 @@ export function createMessageHandler(deps: MessageHandlerDeps): (
 			}
 
 			case Actions.AUDIO_GET_STATUS: {
-				// Just probe CORS without forcefully applying all side-effects
-				policyExecutor.probeCors();
+				// Always apply state to trigger CORS check
+				policyExecutor.applyState();
 
 				// isAnyMediaPlaying updates pausedAt automatically
 				const isPlaying = isAnyMediaPlaying();

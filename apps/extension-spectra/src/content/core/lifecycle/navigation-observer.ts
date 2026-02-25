@@ -4,7 +4,7 @@
 import { isExtensionContextValid } from '../context-guard';
 import { debounce, createEventListener, createCleanupManager } from '../../utils/timing';
 import type { PolicyExecutor } from '../../logic/policy-executor';
-import { clearYouTubeCache } from '../../adapters/youtube-adapter';
+// note: site cache management is now handled by the bridge instance itself during re-matching
 
 interface NavigationObserverDeps {
 	policyExecutor: PolicyExecutor;
@@ -24,7 +24,6 @@ export function createNavigationObserver(deps: NavigationObserverDeps): () => vo
 		if (cur === lastPath) return;
 
 		lastPath = cur;
-		clearYouTubeCache();
 		debouncedNav();
 	};
 

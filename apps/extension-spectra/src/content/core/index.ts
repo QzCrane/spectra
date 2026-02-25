@@ -23,7 +23,7 @@ import {
   cleanupIntervals,
 } from './lifecycle';
 import { initHotkeyListener, setConfigGetter, setConfigUpdater } from '../input/hotkey-listener';
-import { initYouTubeAdapter } from '../adapters/youtube-adapter';
+// note: YouTube specialization is now handled by SiteBridge architecture automagically
 
 const log = logger.content;
 
@@ -127,8 +127,7 @@ async function initSpectra(): Promise<void> {
   // eff: listen for playbackRate changes from injector (universal player support)
   setupPlaybackRateListener(state, policyExecutor);
 
-  // eff: initialize YouTube adapter to listen for injector responses
-  initYouTubeAdapter();
+  // YouTube adapter logic is now encapsulated within SiteBridge and triggered via ModeExecutor callback init
 
   initHotkeyListener().then(cleanup => { cleanupHotkeys = cleanup; });
 

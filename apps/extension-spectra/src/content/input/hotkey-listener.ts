@@ -21,7 +21,7 @@ export async function initHotkeyListener(): Promise<() => void> {
 
 	cleanup.add(createEventListener(document, 'keydown', handleKeydown as EventListener, true));
 
-	if (chrome?.storage?.onChanged) {
+	if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
 		const handler = handleStorageChange;
 		chrome.storage.onChanged.addListener(handler);
 		cleanup.add(() => chrome.storage.onChanged.removeListener(handler));

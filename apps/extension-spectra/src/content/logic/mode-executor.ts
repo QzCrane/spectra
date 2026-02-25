@@ -3,10 +3,11 @@
 import { AudioMode } from '@nexus/audio-engine';
 import type { AudioConfig } from '@nexus/kernel';
 import type { PolicyExecutorDeps, PolicyExecutorState } from '../types';
-import { setDomVolume, releaseVolumeLock, enableVolumeLock, setNativeVolumeCallback, setNativeSpeedCallback, enableDirectTake } from '../audio/dom-volume';
+import { setDomVolume, releaseVolumeLock, enableVolumeLock, setNativeVolumeCallback, setNativeSpeedCallback } from '../audio/dom-volume';
 import { isAnyMediaPlaying } from '../audio/media-detection';
 import { setSpeed } from './media-control';
-import { isYouTube, setYouTubeVolume } from '../adapters/youtube-adapter';
+import { applyToMedia, getPrimaryMedia } from '../utils/media-utils';
+import { getSiteBridge } from './site-bridge/registry';
 import { logger } from '../../shared/logger';
 
 const log = logger.content;
@@ -30,24 +31,67 @@ function notifyWebAudioState(active: boolean): void {
 // eff: register global handler for native changes
 function handleNativeVolume(volume: number, muted: boolean) {
 	if (!currentState || !currentDeps || !currentUpdateConfig) return;
+
+	const bridge = getSiteBridge();
+	if (bridge.shouldInhibitDomSync()) return;
+
+	const newVol = (volume * 100) | 0;
+	const lastVol = currentState.config.volume;
+
 	const ch: Partial<AudioConfig> = {};
 	if (volume < 0) {
 		ch.muted = muted;
 		log.debug(`[Native] Mute: ${muted}`);
 	} else {
-		ch.volume = (volume * 100) | 0; ch.muted = muted;
+		ch.volume = newVol;
+		ch.muted = muted;
 		log.debug(`[Native] Vol: ${ch.volume}%`);
 	}
 	currentUpdateConfig(ch, { isNativeSync: true });
 }
 
 function handleNativeSpeed(speed: number) {
-	if (!currentState || !currentDeps || !currentUpdateConfig) return;
-	// note: avoid trivial updates
-	if (Math.abs((currentState.config.speed || 1) - speed) < 0.05) return;
+	if (!currentUpdateConfig) return;
+	const bridge = getSiteBridge();
+	if (bridge.shouldInhibitDomSync()) return;
 
 	log.debug(`[Native] Speed: ${speed}x`);
 	currentUpdateConfig({ speed }, { isNativeSync: true });
+}
+
+function handleSiteSyncBack(changes: Partial<AudioConfig>, options?: { isNativeSync?: boolean }) {
+	if (!currentState || !currentUpdateConfig) return;
+
+	// rule: [Boost Guard] Prevent native ceiling reports (100%) from overwriting plugin boost (>100%)
+	if (changes.volume === 100 && currentState.config.volume > 100) {
+		log.debug(`[SiteBridge] Guard: Ignoring 100% report while boosting at ${currentState.config.volume}%`);
+		delete changes.volume;
+		if (Object.keys(changes).length === 0) return;
+	}
+
+	// rule: [Speed Persistence Guard] Ignore programmatic speed resets to 1x during media loading/ad-swaps
+	if (changes.speed === 1 && (currentState.config.speed || 1) !== 1) {
+		const media = getPrimaryMedia();
+		const isLoading = media && media.readyState < 2; // HAVE_CURRENT_DATA
+		if (isLoading) {
+			log.debug(`[SiteBridge] Speed Guard: Ignoring 1x reset during media swap`);
+			delete changes.speed;
+			if (Object.keys(changes).length === 0) return;
+		}
+	}
+
+	// rule: prevent loop - ignore if diff is too small
+	const volDiff = changes.volume !== undefined ? Math.abs(currentState.config.volume - changes.volume) : 0;
+	const speedDiff = changes.speed !== undefined ? Math.abs((currentState.config.speed || 1) - changes.speed) : 0;
+	const muteDiff = changes.muted !== undefined ? currentState.config.muted !== changes.muted : false;
+
+	// use previously approved thresholds (1% volume, 0.05 speed)
+	if (volDiff < 1 && speedDiff < 0.05 && !muteDiff && Object.keys(changes).length > 0) {
+		return;
+	}
+
+	log.debug(`[SiteBridge] Auth Sync Accepted:`, changes);
+	currentUpdateConfig(changes, options ?? { isNativeSync: true });
 }
 
 export function initModeExecutorCallbacks(
@@ -63,8 +107,14 @@ export function initModeExecutorCallbacks(
 	currentUpdateBadge = updateBadge;
 	currentBroadcastUI = broadcastUI;
 	currentUpdateConfig = updateConfig;
+
 	setNativeVolumeCallback(handleNativeVolume);
 	setNativeSpeedCallback(handleNativeSpeed);
+
+	// rule: initialize active site bridge
+	getSiteBridge().onInitialize({
+		updateConfig: handleSiteSyncBack
+	});
 }
 
 // post: returns true if the user has engaged with the page, making it safe to initialize AudioContext
@@ -112,7 +162,7 @@ export function executeMode(deps: PolicyExecutorDeps, state: PolicyExecutorState
 		const domVol = config.muted ? 0 : Math.min(1, config.volume / 100);
 		enableVolumeLock(domVol, config.muted);
 		// rule: sync YouTube native UI
-		if (isYouTube()) setYouTubeVolume(config.volume, config.muted);
+		getSiteBridge().syncVolume(config.volume, config.muted);
 
 	} else if (mode === AudioMode.NATIVE_WEBAUDIO) {
 
@@ -158,8 +208,7 @@ function applyWebAudioState(config: AudioConfig, deps: PolicyExecutorDeps): void
 	}
 
 	setDomVolume(domVol, config.muted);
-	// rule: sync YouTube native UI
-	if (isYouTube()) setYouTubeVolume(config.volume, config.muted);
+	getSiteBridge().syncVolume(config.volume, config.muted);
 
 	audioController.scanAndAttach();
 	audioController.updateParams(effectiveConfig);
@@ -175,6 +224,5 @@ function applyWebAudioState(config: AudioConfig, deps: PolicyExecutorDeps): void
 function fallbackToDom(config: AudioConfig): void {
 	const domVol = config.muted ? 0 : Math.min(1, config.volume / 100);
 	enableVolumeLock(domVol, config.muted);
-	// rule: sync YouTube native UI
-	if (isYouTube()) setYouTubeVolume(config.volume, config.muted);
+	getSiteBridge().syncVolume(config.volume, config.muted);
 }

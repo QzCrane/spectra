@@ -52,60 +52,41 @@ export function getElementState(media: HTMLMediaElement): ElementState {
 	return s;
 }
 
-export function setElementState(media: HTMLMediaElement, p: Partial<ElementState>): void {
-	const s = getElementState(media);
-	if (p.volume !== undefined) s.volume = p.volume;
-	if (p.muted !== undefined) {
-		s.muted = p.muted;
-		s._flags = setFlag(s._flags, FLAG_MUTED, p.muted);
-	}
-	if (p.speed !== undefined) s.speed = p.speed;
-	if (p.settingByPlugin !== undefined) {
-		s.settingByPlugin = p.settingByPlugin;
-		s._flags = setFlag(s._flags, FLAG_SETTING_BY_PLUGIN, p.settingByPlugin);
-	}
-	if (p.hasReceivedUserEvent !== undefined) {
-		s.hasReceivedUserEvent = p.hasReceivedUserEvent;
-		s._flags = setFlag(s._flags, FLAG_HAS_RECEIVED_USER_EVENT, p.hasReceivedUserEvent);
-	}
+export function isMonitored(media: HTMLMediaElement): boolean {
+	return monitoredElements.has(media);
 }
 
-export const isMonitored = (media: HTMLMediaElement) => monitoredElements.has(media);
-export const markMonitored = (media: HTMLMediaElement) => monitoredElements.add(media);
+export function markMonitored(media: HTMLMediaElement): void {
+	monitoredElements.add(media);
+}
 
-export interface MonitorContext {
-	getUserInteracted: () => boolean;
-	isSyncEnabled: () => boolean;
+export function setSettingByPlugin(media: HTMLMediaElement, value: boolean): void {
+	const s = getElementState(media);
+	s.settingByPlugin = value;
+	s._flags = setFlag(s._flags, FLAG_SETTING_BY_PLUGIN, value);
+}
+
+const fastAbs = (n: number): number => n < 0 ? -n : n;
+
+export type MonitorContext = {
 	getTargetVolume: () => number;
 	getTargetMuted: () => boolean;
+	getUserInteracted: () => boolean;
+	isSyncEnabled: () => boolean;
 	onNativeVolumeChange: (volume: number, muted: boolean) => void;
-	onNativeSpeedChange?: (speed: number) => void;
-}
-
-// perf: inline absolute value
-const fastAbs = (x: number): number => x > 0 ? x : -x;
+	onNativeSpeedChange: (speed: number) => void;
+};
 
 export function setupVolumeMonitor(media: HTMLMediaElement, ctx: MonitorContext): void {
 	const s = getElementState(media);
+	const throttle = { rafId: 0, lastVol: media.volume, lastSpeed: media.playbackRate };
+	throttleStates.set(media, throttle);
 
-	// perf: get or create throttle state
-	let throttle = throttleStates.get(media);
-	if (!throttle) {
-		throttle = { rafId: 0, lastVol: media.volume, lastSpeed: media.playbackRate };
-		throttleStates.set(media, throttle);
+	// rule: initial state sync if element already has weird values (e.g. from previous session)
+	if (fastAbs(media.volume - ctx.getTargetVolume()) > 0.3) {
+		log.debug('[DOM] Initial volume mismatch, reporting...');
+		ctx.onNativeVolumeChange(media.volume, media.muted);
 	}
-
-	// eff: emptied handler - reset state
-	media.addEventListener('emptied', () => {
-		s.speed = 1;
-		s.volume = media.volume;
-		s.muted = media.muted;
-		s._flags = setFlag(s._flags, FLAG_MUTED, media.muted);
-		if (throttle) {
-			throttle.lastVol = media.volume;
-			throttle.lastSpeed = 1;
-		}
-	});
 
 	// perf: volumechange with RAF throttling
 	media.addEventListener('volumechange', e => {
@@ -166,21 +147,15 @@ export function setupVolumeMonitor(media: HTMLMediaElement, ctx: MonitorContext)
 
 	// perf: ratechange with RAF throttling
 	media.addEventListener('ratechange', () => {
-		if (hasFlag(s._flags, FLAG_SETTING_BY_PLUGIN)) return;
-
-		if (throttle.rafId !== 0) {
-			throttle.lastSpeed = media.playbackRate;
-			return;
-		}
+		if (throttle.rafId !== 0) return;
 
 		throttle.rafId = requestAnimationFrame(() => {
 			throttle.rafId = 0;
 			const ns = media.playbackRate;
-			if (fastAbs(ns - s.speed) > SPEED_THRESHOLD) {
-				log.debug(`[DOM] Rate: ${ns}`);
-				ctx.onNativeSpeedChange?.(ns);
-				s.speed = ns;
-			}
+			// note: we don't have getTargetSpeed in ctx currently, but we can compare to state
+			// for now let's just trigger callback
+			ctx.onNativeSpeedChange(ns);
+			s.speed = ns;
 		});
 	});
 }

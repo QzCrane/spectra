@@ -3,7 +3,6 @@
 
 import { createLogger } from '../../shared/logger';
 import { getElementState, isMonitored, markMonitored, setupVolumeMonitor, type MonitorContext } from './volume-observer';
-import { isYouTube, setYouTubeVolume } from '../adapters/youtube-adapter';
 import { applyToMedia } from '../utils/media-utils';
 
 const log = createLogger('DOMVolume');
@@ -24,8 +23,8 @@ const ctx: MonitorContext = {
 	isSyncEnabled: () => syncEnabled,
 	getTargetVolume: () => targetVolume,
 	getTargetMuted: () => targetMuted,
-	onNativeVolumeChange: (v, m) => onNativeVolumeChange?.(v, m),
-	onNativeSpeedChange: (s) => onNativeSpeedChange?.(s),
+	onNativeVolumeChange: (v: number, m: boolean) => onNativeVolumeChange?.(v, m),
+	onNativeSpeedChange: (s: number) => onNativeSpeedChange?.(s),
 };
 
 function ensureMonitoring(): void {
@@ -42,8 +41,6 @@ export function setDomVolume(vol: number, muted: boolean): void {
 
 	targetVolume = normalizedVol;
 	targetMuted = muted;
-
-	if (isYouTube()) setYouTubeVolume(vol, muted);
 
 	let applied = 0;
 	applyToMedia(m => {

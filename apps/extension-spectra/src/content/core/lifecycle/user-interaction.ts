@@ -4,6 +4,7 @@
 import { AudioMode, WebAudioController } from '@nexus/audio-engine';
 import { logger } from '../../../shared/logger';
 import { getPrimaryMedia } from '../../utils/media-utils';
+import { getSiteBridge } from '../../logic/site-bridge/registry';
 import type { PolicyExecutorState } from '../../types';
 import type { PolicyExecutor } from '../../logic/policy-executor';
 
@@ -41,6 +42,8 @@ export function setupUserGestureListeners(
 }
 
 export function setupPopupConnectionListener(state: PolicyExecutorState, onPopupOpen?: () => void): void {
+	if (typeof chrome === 'undefined' || !chrome.runtime?.onConnect) return;
+
 	chrome.runtime.onConnect.addListener((port) => {
 		if (port.name === 'popup-connection') {
 			state.isPopupOpen = true;
@@ -52,6 +55,9 @@ export function setupPopupConnectionListener(state: PolicyExecutorState, onPopup
 }
 
 function syncDomVolumeToState(state: PolicyExecutorState): void {
+	const bridge = getSiteBridge();
+	if (!bridge.canPullInitialState()) return;
+
 	const media = getPrimaryMedia();
 	if (!media) return;
 
