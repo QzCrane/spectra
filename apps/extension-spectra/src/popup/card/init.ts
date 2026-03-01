@@ -4,7 +4,7 @@ import { predictCapture } from '@nexus/audio-engine';
 import { getAudioConfig, type GlobalSettings } from '@nexus/kernel';
 import { Actions } from '@nexus/contracts';
 import type { I18NDict, ContentStatusResponse } from '../types';
-import { getDomain, sendToTab, sendToBackground } from '../utils/dom';
+import { getDomain, sendToTab, sendToBackground, messenger } from '../utils/dom';
 import { cardRenderCallbacks } from '../views/settings';
 import { getCardUIElements } from './ui-elements';
 import { cleanConfig, type CardInternalState, type InitCardParams } from './types';
@@ -22,11 +22,17 @@ export async function initCard(params: InitCardParams): Promise<boolean> {
   if (!tab.id) return false;
   const tabId = tab.id;
 
-  // note: probe the content script to verify connectivity and retrieve the current playback/paused state
-  const status = await sendToTab<ContentStatusResponse>(tabId, 'AUDIO_GET_STATUS', {});
+  // eff: probe content script; if unreachable, attempt on-demand injection then retry once
+  let status = await sendToTab<ContentStatusResponse>(tabId, 'AUDIO_GET_STATUS', {});
   if (!status) {
-    // rule: abort card creation if the content script is dead or unreachable (e.g. extension updated but page not refreshed)
-    return false;
+    try {
+      const injected = await messenger.send('INJECT_CONTENT_SCRIPT', { tabId });
+      if (injected?.success) {
+        await new Promise(r => setTimeout(r, 800));
+        status = await sendToTab<ContentStatusResponse>(tabId, 'AUDIO_GET_STATUS', {});
+      }
+    } catch { /* background unreachable */ }
+    if (!status) return false;
   }
 
   const isCaptureActive = await sendToBackground<boolean>('CAPTURE_GET_STATE', { tabId });

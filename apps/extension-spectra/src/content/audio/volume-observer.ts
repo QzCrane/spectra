@@ -83,9 +83,11 @@ export function setupVolumeMonitor(media: HTMLMediaElement, ctx: MonitorContext)
 	throttleStates.set(media, throttle);
 
 	// rule: initial state sync if element already has weird values (e.g. from previous session)
+	// fix: only report volume difference, preserve plugin's muted state to prevent
+	// autoplay-muted elements from silently overriding user configuration
 	if (fastAbs(media.volume - ctx.getTargetVolume()) > 0.3) {
-		log.debug('[DOM] Initial volume mismatch, reporting...');
-		ctx.onNativeVolumeChange(media.volume, media.muted);
+		log.debug('[DOM] Initial volume mismatch, reporting (preserving muted state)...');
+		ctx.onNativeVolumeChange(media.volume, ctx.getTargetMuted());
 	}
 
 	// perf: volumechange with RAF throttling
@@ -147,13 +149,14 @@ export function setupVolumeMonitor(media: HTMLMediaElement, ctx: MonitorContext)
 
 	// perf: ratechange with RAF throttling
 	media.addEventListener('ratechange', () => {
+		if (hasFlag(s._flags, FLAG_SETTING_BY_PLUGIN)) return;
 		if (throttle.rafId !== 0) return;
 
 		throttle.rafId = requestAnimationFrame(() => {
 			throttle.rafId = 0;
+			if (hasFlag(s._flags, FLAG_SETTING_BY_PLUGIN)) return;
 			const ns = media.playbackRate;
-			// note: we don't have getTargetSpeed in ctx currently, but we can compare to state
-			// for now let's just trigger callback
+			if (fastAbs(ns - s.speed) < SPEED_THRESHOLD) return;
 			ctx.onNativeSpeedChange(ns);
 			s.speed = ns;
 		});

@@ -73,7 +73,7 @@ export interface NexusMessages {
 	'VIDEO_MARKER_LIST': { req: void; res: { markers: Array<{ id: string; time: number; label: string }> } };
 
 	// Tab/Global State Reports
-	'TAB_REPORT_MEDIA': { req: { hasMediaElement: boolean }; res: void };
+	'TAB_REPORT_MEDIA': { req: { hasMediaElement: boolean; userInteracted?: boolean }; res: void };
 	'TAB_GET_VISIBLE_TABS': { req: void; res: { tabs: number[] } };
 
 	// Remote Control
@@ -81,6 +81,9 @@ export interface NexusMessages {
 	'REMOTE_CREATE_SESSION': { req: void; res: { sessionId: string; peerId: string } };
 	'REMOTE_CLOSE_SESSION': { req: void; res: { closed: boolean } };
 	'REMOTE_COMMAND': { req: { command: 'volume_up' | 'volume_down' | 'mute' | 'play_pause' | 'next' | 'prev' }; res: { executed: boolean } };
+
+	// Lifecycle
+	'INJECT_CONTENT_SCRIPT': { req: { tabId: number }; res: { success: boolean } };
 
 	// User Scripts
 	'USER_SCRIPT_EXECUTE': { req: { script: string }; res: { success: boolean; error?: string } };

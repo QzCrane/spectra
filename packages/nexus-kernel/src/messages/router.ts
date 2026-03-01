@@ -50,12 +50,16 @@ export function createRouter() {
           sender: chrome.runtime.MessageSender,
           sendResponse: (response: unknown) => void
         ) => {
+          console.log('[NEXUS Router] Received message:', message.action, 'from', sender.url?.substring(0, 50));
+          
           if (!message || typeof message.action !== 'string') {
+            console.log('[NEXUS Router] Invalid message, ignoring');
             return false;
           }
 
           // inv: Offscreen messages are handled by the Offscreen document directly
           if (message.target === 'offscreen') {
+            console.log('[NEXUS Router] Offscreen target, ignoring');
             return false;
           }
 
@@ -69,6 +73,7 @@ export function createRouter() {
 
           Promise.resolve(handler(payload, sender))
             .then((response) => {
+              console.log('[NEXUS Router] Handler response for', action, ':', response);
               sendResponse(response);
             })
             .catch((error) => {

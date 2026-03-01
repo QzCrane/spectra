@@ -20,7 +20,7 @@ export interface SiteBridge {
 	/** Sync Spectra playback speed to site-specific player */
 	syncSpeed(speed: number): void;
 
-	/** 
+	/**
 	 * If true, Spectra will ignore native DOM 'volumechange' events.
 	 * Required for sites that internally manipulate <video>.volume (like YouTube).
 	 */
@@ -31,4 +31,7 @@ export interface SiteBridge {
 	 * Usually false for sites with aggressive volume resets.
 	 */
 	canPullInitialState(): boolean;
+
+	/** Clear cached state to force re-sync after SPA navigation */
+	resetCaches?(): void;
 }

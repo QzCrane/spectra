@@ -147,7 +147,9 @@ export function hijackPlaybackRate(): void {
 	} else {
 		const og = origDesc.get!, os = origDesc.set!;
 		Object.defineProperty(proto, 'playbackRate', {
-			get: function () { return rateKey in this ? this[rateKey] : og.call(this); },
+			// fix: NEVER cache the getter. Natively changing the `src` attribute resets playbackRate via C++, 
+			// which bypasses our JS setter. If we cache it, our whole extension is blinded to native resets!
+			get: function () { return og.call(this); },
 			set: function (v) {
 				const nr = +v || 1;
 				const or = this[lastRateKey] ?? og.call(this);

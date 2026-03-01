@@ -19,15 +19,25 @@ export function sendVolumeAction(action: HotkeyAction, params?: HotkeyParams): v
 	const step = params?.step ?? 10;
 	const c = getConfig();
 	let ch: Partial<AudioConfig> = {};
+	let shouldUnMute = false;
 
 	switch (action) {
-		case 'volume_up': ch = { volume: Math.min(800, (c.volume ?? 100) + step) }; break;
-		case 'volume_down': ch = { volume: Math.max(0, (c.volume ?? 100) - step) }; break;
+		case 'volume_up':
+			ch = { volume: Math.min(800, (c.volume ?? 100) + step) };
+			shouldUnMute = true;
+			break;
+		case 'volume_down':
+			ch = { volume: Math.max(0, (c.volume ?? 100) - step) };
+			shouldUnMute = true;
+			break;
 		case 'volume_mute': ch = { muted: !c.muted }; break;
-		case 'volume_set': if (params?.volume !== undefined) ch = { volume: params.volume }; break;
+		case 'volume_set':
+			if (params?.volume !== undefined) ch = { volume: params.volume };
+			shouldUnMute = true;
+			break;
 	}
 
-	if (updateConfigFn) updateConfigFn(ch, { showOSD: true });
+	if (updateConfigFn) updateConfigFn(ch, { showOSD: true, unMute: shouldUnMute });
 }
 
 // eff: handles speed adjustment hotkeys through unified config flow

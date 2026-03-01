@@ -40,6 +40,7 @@ export function createStateReapplyInterval(
 // eff: sets up a 5-second polling task to inform the background service about the presence of media elements
 export function createMediaReportInterval(
 	messenger: NexusMessenger,
+	state: PolicyExecutorState,
 	onContextInvalid?: () => void
 ): ReturnType<typeof setInterval> {
 	return setInterval(() => {
@@ -47,16 +48,21 @@ export function createMediaReportInterval(
 			onContextInvalid?.();
 			return;
 		}
-		reportMediaState(messenger);
+		reportMediaState(messenger, state);
 	}, 5000);
 }
 
 // eff: performs a DOM scan for media tags and transmits the discovery state to the kernel
-export function reportMediaState(messenger: NexusMessenger): void {
+export function reportMediaState(messenger: NexusMessenger, state?: PolicyExecutorState): void {
 	if (!isExtensionContextValid()) return;
 
 	const hasMedia = hasMediaElements();
-	safeSend(() => messenger.send('TAB_REPORT_MEDIA', { hasMediaElement: hasMedia })).catch(() => {
+	const interacted = state ? (state.userHasInteracted || state.hasGesture) : false;
+
+	safeSend(() => messenger.send('TAB_REPORT_MEDIA', {
+		hasMediaElement: hasMedia,
+		userInteracted: interacted
+	})).catch(() => {
 		// note: failures usually indicate a closing tab session
 	});
 }

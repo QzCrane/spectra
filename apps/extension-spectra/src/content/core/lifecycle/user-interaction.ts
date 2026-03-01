@@ -17,6 +17,7 @@ function handleGesture() {
 	if (!listenerCtx) return;
 	const { state, ctrl, exec } = listenerCtx;
 	state.hasGesture = true;
+	state.userHasInteracted = true;
 
 	if (!listenerCtx.probed) {
 		listenerCtx.probed = true;
@@ -34,11 +35,20 @@ export function setupUserGestureListeners(
 	state: PolicyExecutorState,
 	audioController: WebAudioController,
 	policyExecutor: PolicyExecutor
-): void {
+): () => void {
 	listenerCtx = { state, ctrl: audioController, exec: policyExecutor, probed: false };
 	const evts = ['click', 'keydown', 'touchstart', 'mousedown'];
-	// eff: use passive single-fire listeners
-	for (const e of evts) document.addEventListener(e, handleGesture, { once: true, passive: true });
+
+	for (const e of evts) {
+		document.addEventListener(e, handleGesture, { once: true, passive: true });
+	}
+
+	return () => {
+		for (const e of evts) {
+			document.removeEventListener(e, handleGesture);
+		}
+		listenerCtx = null;
+	};
 }
 
 export function setupPopupConnectionListener(state: PolicyExecutorState, onPopupOpen?: () => void): void {
@@ -47,6 +57,7 @@ export function setupPopupConnectionListener(state: PolicyExecutorState, onPopup
 	chrome.runtime.onConnect.addListener((port) => {
 		if (port.name === 'popup-connection') {
 			state.isPopupOpen = true;
+			state.userHasInteracted = true;
 			syncDomVolumeToState(state);
 			onPopupOpen?.();
 			port.onDisconnect.addListener(() => { state.isPopupOpen = false; });

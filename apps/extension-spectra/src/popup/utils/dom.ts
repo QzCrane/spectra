@@ -49,11 +49,18 @@ export function isRestrictedUrl(url: string | undefined): boolean {
 
 // eff: tunnels messages from the popup to a specific tab via the kernel messenger
 export async function sendToTab<T = unknown>(tabId: number, action: string, payload: unknown = {}): Promise<T | null> {
+  console.log(`[Popup→Tab] Sending ${action} to tab ${tabId}`, payload);
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return await messenger.sendToTab(tabId, action as any, payload as any) as T;
+    const result = await messenger.sendToTab(tabId, action as any, payload as any) as T;
+    console.log(`[Popup←Tab] Got response for ${action}:`, result);
+    return result;
   } catch (error) {
-    console.debug(`[Popup] sendToTab failed for ${action}:`, error);
+    if (error instanceof Error && error.message.includes('Receiving end does not exist')) {
+      console.debug(`[Popup] sendToTab skipped for ${action} (no content script)`);
+    } else {
+      console.error(`[Popup] sendToTab failed for ${action}:`, error);
+    }
     return null;
   }
 }

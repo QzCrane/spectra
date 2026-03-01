@@ -28,8 +28,23 @@ export function setupLifecycleListeners(): void {
 			const s = tabAudioStates.get(tabId);
 			if (changeInfo.audible && s) s.lastAudibleTime = Date.now();
 		}
-		if (changeInfo.status === 'loading' && changeInfo.url) {
-			// note: reload triggers automatic browser-side capture termination
+		if (changeInfo.status === 'complete') {
+			// task: if a tab is refreshed and it's the active one, ensure it's visible
+			chrome.tabs.get(tabId).then(tab => {
+				if (tab.active) {
+					const s = tabAudioStates.get(tabId);
+					if (s) {
+						s.userManuallyActivated = true;
+					} else {
+						tabAudioStates.set(tabId, {
+							hasMediaElement: false,
+							lastAudibleTime: 0,
+							lastActivatedTime: Date.now(),
+							userManuallyActivated: true,
+						});
+					}
+				}
+			}).catch(() => { });
 		}
 	});
 
@@ -38,4 +53,18 @@ export function setupLifecycleListeners(): void {
 		storage.tabSession.remove(tabId).catch(() => { });
 		if (captureStates.get(tabId)) handleCaptureToggle(tabId, false);
 	});
+
+	// Task: Seed initial state with current active tabs to ensure visibility across reloads
+	chrome.tabs.query({ active: true }).then(tabs => {
+		const now = Date.now();
+		for (const tab of tabs) {
+			if (!tab.id) continue;
+			tabAudioStates.set(tab.id, {
+				hasMediaElement: false,
+				lastAudibleTime: 0,
+				lastActivatedTime: now,
+				userManuallyActivated: true, // mark as activated because it IS the current active tab
+			});
+		}
+	}).catch(() => { });
 }

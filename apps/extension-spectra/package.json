@@ -1,6 +1,6 @@
 {
 	"name": "@nexus/extension-spectra",
-	"version": "1.3.2",
+	"version": "1.3.3",
 	"private": true,
 	"description": "SPECTRA - The Audio & Video Enhancement Extension",
 	"type": "module",

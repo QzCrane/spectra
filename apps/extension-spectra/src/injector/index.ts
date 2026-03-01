@@ -9,6 +9,7 @@ import { initYouTubeAdapter } from './youtube-adapter';
 import { initMessageBridge } from './message-bridge';
 
 (function () {
+	console.log('[SPECTRA] [DEBUG] injector.js execution started');
 	hijackPlaybackRate();
 	enforceCORS();
 	initFullscreenInterceptor();
