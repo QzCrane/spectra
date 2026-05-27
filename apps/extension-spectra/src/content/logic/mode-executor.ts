@@ -18,7 +18,6 @@ let currentUpdateBadge: (() => void) | null = null;
 let currentBroadcastUI: (() => void) | null = null;
 let currentUpdateConfig: ((changes: Partial<AudioConfig>, options?: { isNativeSync?: boolean }) => void) | null = null;
 let lastWebAudioActive = false;
-let lastSpeedSetTime = 0;
 
 // eff: broadcasts WEBAUDIO mode state to injector for fullscreen handling
 function notifyWebAudioState(active: boolean): void {

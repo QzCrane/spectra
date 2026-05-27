@@ -19,10 +19,28 @@ import { executeHotkeyAction } from '../input/hotkey-actions';
 
 export interface MessageHandlerDeps {
 	state: PolicyExecutorState;
-	policyExecutor: PolicyExecutor;
+	policyExecutor?: PolicyExecutor;
 	captureManager: CaptureManager;
 	settingsManager: SettingsManager;
 	getVisualizerData: () => Uint8Array | null;
+}
+
+interface PendingMessage {
+	msg: { action?: string; payload?: unknown };
+	sendResponse: (response?: unknown) => void;
+}
+
+let pendingQueue: PendingMessage[] = [];
+let pendingQueueMaxSize = 32;
+
+export function flushPendingQueue(): void {
+	if (pendingQueue.length === 0) return;
+	const queue = pendingQueue;
+	pendingQueue = [];
+	for (const item of queue) {
+		try { item.sendResponse({ error: 'executor_dropped', reason: 'booting_timeout' }); }
+		catch { /* sendResponse may already be invalid */ }
+	}
 }
 
 
@@ -60,8 +78,14 @@ export function createMessageHandler(deps: MessageHandlerDeps): (
 				});
 				return true;
 			}
+			if (pendingQueue.length < pendingQueueMaxSize) {
+				pendingQueue.push({ msg: msg as PendingMessage['msg'], sendResponse });
+				return true;
+			}
 			return false;
 		}
+
+		flushPendingQueue();
 
 		switch (msg.action) {
 			case Actions.AUDIO_SET_CONFIG: {

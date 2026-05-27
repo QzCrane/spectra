@@ -7,8 +7,9 @@ import { PolicyEngine, WebAudioController } from '@nexus/audio-engine';
 import { isExtensionContextValid, safeSend } from './context-guard';
 import { createSettingsManager } from './settings-manager';
 import { createCaptureManager } from '../audio/capture-manager';
-import { createPolicyExecutor, type PolicyExecutorState } from '../logic/policy-executor';
-import { createMessageHandler } from '../logic/message-handler';
+import type { CaptureManager } from '../audio/capture-manager';
+import { createPolicyExecutor } from '../logic/policy-executor';
+import { createMessageHandler, flushPendingQueue } from '../logic/message-handler';
 import { logger } from '../../shared/logger';
 
 import {
@@ -20,13 +21,14 @@ import {
   setupPopupConnectionListener,
   setupFullscreenHandler,
   createNavigationObserver,
-  cleanupIntervals,
 } from './lifecycle';
 import { initHotkeyListener, setConfigGetter, setConfigUpdater } from '../input/hotkey-listener';
 import { Registry } from '../../shared/registry';
 import { createSnapshot, mountStub, consumeStub } from './sentinel';
 import { getSiteBridge } from '../logic/site-bridge/registry';
-// note: YouTube specialization is now handled by SiteBridge architecture automagically
+import type { ContentDeps, PolicyExecutorState } from '../types';
+import type { PolicyExecutor } from '../logic/policy-executor';
+import type { SettingsManager } from './settings-manager';
 
 const log = logger.content;
 
@@ -69,19 +71,21 @@ cleanupLegacyTransitions();
 
 initSpectra();
 
-// goal: bootstraps the extension logic within the host page context
-async function initSpectra(): Promise<void> {
-  const registry = new Registry();
-  log.info(`SPECTRA Initializing... ${chrome.runtime.getManifest().version}`);
+interface InitContext {
+  registry: Registry;
+  messenger: ReturnType<typeof createMessenger>;
+  policyEngine: PolicyEngine;
+  audioController: WebAudioController;
+  settingsManager: SettingsManager;
+  captureManager: CaptureManager;
+  state: PolicyExecutorState;
+  deps: ContentDeps;
+}
 
-  const messenger = createMessenger('content');
-  const policyEngine = new PolicyEngine();
-  const audioController = new WebAudioController();
-
-  // task: attempt to inherit state from previous version (hot update)
+// eff: tries to inherit state from a zero-refresh stub, or falls back to background fetch
+async function createInitialState(messenger: ReturnType<typeof createMessenger>): Promise<PolicyExecutorState> {
   const recoveredState = consumeStub();
 
-  // task: if no stub, fetch persisted config from background (tabSession > domain preset > default)
   let initialConfig = recoveredState?.config;
   if (!initialConfig) {
     try {
@@ -90,53 +94,48 @@ async function initSpectra(): Promise<void> {
     } catch { /* background unreachable on first load race */ }
   }
 
-  const settingsManager = createSettingsManager(messenger);
-  const captureManager = createCaptureManager(messenger);
-
-  const state: PolicyExecutorState = {
+  return {
     config: initialConfig ?? { ...DEFAULT_AUDIO_CONFIG },
     activeMode: null,
     hasGesture: false,
     userHasInteracted: !!recoveredState,
     isPopupOpen: false,
   };
+}
 
-  const deps: any = { messenger, policyEngine, audioController, captureManager, settingsManager, state };
-  const messageHandler = createMessageHandler(deps);
+// eff: sets up core messaging infrastructure (onMessage listener + policy executor)
+function bootstrapMessaging(ctx: InitContext): void {
+  ctx.deps.state = ctx.state;
+  const messageHandler = createMessageHandler(ctx.deps);
 
   chrome.runtime.onMessage.addListener(messageHandler);
+  ctx.registry.track(() => chrome.runtime.onMessage.removeListener(messageHandler));
+}
 
-  registry.track(() => chrome.runtime.onMessage.removeListener(messageHandler));
-
-  const policyExecutor = await createPolicyExecutor(
-    { messenger, policyEngine, audioController, captureManager, settingsManager },
-    state
-  );
-  deps.policyExecutor = policyExecutor;
-
-  // task: track audio context for destruction on next update
-  registry.track(() => {
+// eff: registers teardown cleanup hooks into the registry
+function bootstrapTeardown(ctx: InitContext): void {
+  ctx.registry.track(() => {
     log.debug('[Registry] Tearing down AudioContext...');
-    audioController.destroyContext().catch(() => { });
+    ctx.audioController.destroyContext().catch(() => { });
   });
 
-  registry.track(() => {
-    // eff: mount current state into stub before tearing down to allow next version to inherit
-    const snapshot = createSnapshot(state);
+  ctx.registry.track(() => {
+    const snapshot = createSnapshot(ctx.state);
     mountStub(snapshot);
   });
 
-  // eff: route all cleanup to the registry for atomic disposal
   (window as any).__SPECTRA_TEARDOWN__ = () => {
-    registry.dispose();
+    ctx.registry.dispose();
     log.info('SPECTRA Version Transition: Old logic dismantled.');
   };
+}
 
-  setupPopupConnectionListener(state, () => {
-    policyExecutor.updateBadge();
-  });
+// eff: registers all lifecycle listeners (popup, media, gestures, fullscreen, navigation, hotkeys, rate sync)
+function bootstrapLifecycle(ctx: InitContext): void {
+  const { state, messenger, audioController, captureManager, registry, deps } = ctx;
+  const policyExecutor = deps.policyExecutor!;
 
-
+  setupPopupConnectionListener(state, () => policyExecutor.updateBadge());
 
   registry.track(createMediaObserver(state, audioController, policyExecutor));
 
@@ -146,7 +145,6 @@ async function initSpectra(): Promise<void> {
   const mediaReportId = createMediaReportInterval(messenger, state);
   registry.track(() => clearInterval(mediaReportId));
 
-  // task: handle user gestures correctly with registry tracking
   const gestureCleanup = setupUserGestureListeners(state, audioController, policyExecutor);
   registry.track(gestureCleanup);
 
@@ -162,9 +160,6 @@ async function initSpectra(): Promise<void> {
 
   registry.addEventListener(window, 'message', ((event: MessageEvent) => {
     if (event.data?.type === 'SPECTRA_RATE') {
-      // fix: on YouTube, speed sync is handled exclusively by the YouTubeBridge
-      // SPECTRA_RATE from playback-rate.ts hijack would bypass bridge's cooldown/guard
-      // and poison the config to speed=1 during video transitions
       const bridge = getSiteBridge();
       if (bridge.shouldInhibitDomSync()) return;
 
@@ -174,22 +169,59 @@ async function initSpectra(): Promise<void> {
   }) as any);
 
   initHotkeyListener().then(cleanup => { registry.track(cleanup); });
+}
+
+// eff: applies the initial state -- either from a hot swap stub or a fresh background load
+async function applyInitialState(ctx: InitContext): Promise<void> {
+  const { state, messenger, settingsManager, deps } = ctx;
+  const policyExecutor = deps.policyExecutor!;
+  const hasRecovered = stdhubConsumed();
 
   try {
-    // task: recover from stub OR load from background with retry
-    if (recoveredState) {
+    if (hasRecovered) {
       log.info('[Handoff] State recovered from stub.');
       policyExecutor.applyState();
     } else {
-      // rule: if no stub, it's either a fresh page load or an extension hard-reload
-      // we must ensure we get the latest config before applying state
       await loadConfigAndApply(messenger, state, settingsManager, policyExecutor);
     }
-
     reportMediaState(messenger, state);
   } catch (e) {
     log.error('Initialization failed:', e);
   }
+}
+
+// eff: wrapper around consumeStub() that returns true if a build was recovered
+function stdhubConsumed(): boolean {
+  return consumeStub() !== undefined;
+}
+
+// goal: bootstraps the extension logic within the host page context
+async function initSpectra(): Promise<void> {
+  const registry = new Registry();
+  log.info(`SPECTRA Initializing... ${chrome.runtime.getManifest().version}`);
+
+  const messenger = createMessenger('content');
+  const policyEngine = new PolicyEngine();
+  const audioController = new WebAudioController();
+  const settingsManager = createSettingsManager(messenger);
+  const captureManager = createCaptureManager(messenger);
+  const state = await createInitialState(messenger);
+
+  const deps: ContentDeps = { messenger, policyEngine, audioController, captureManager, settingsManager, state, getVisualizerData: () => audioController.getVisualizerData() };
+
+  bootstrapMessaging({ registry, messenger, policyEngine, audioController, settingsManager, captureManager, state, deps });
+
+  const policyExecutor = await createPolicyExecutor(
+    { messenger, policyEngine, audioController, captureManager, settingsManager },
+    state
+  );
+  deps.policyExecutor = policyExecutor;
+  flushPendingQueue();
+
+  bootstrapTeardown({ registry, messenger, policyEngine, audioController, settingsManager, captureManager, state, deps });
+  bootstrapLifecycle({ registry, messenger, policyEngine, audioController, settingsManager, captureManager, state, deps });
+
+  await applyInitialState({ registry, messenger, policyEngine, audioController, settingsManager, captureManager, state, deps });
 
   (window as any).__SPECTRA_LISTENERS_READY__ = true;
   log.info('Content Script ready.');
@@ -199,8 +231,8 @@ async function initSpectra(): Promise<void> {
 async function loadConfigAndApply(
   messenger: ReturnType<typeof createMessenger>,
   state: PolicyExecutorState,
-  settingsManager: ReturnType<typeof createSettingsManager>,
-  policyExecutor: import('../logic/policy-executor').PolicyExecutor
+  settingsManager: SettingsManager,
+  policyExecutor: PolicyExecutor
 ): Promise<void> {
   if (!isExtensionContextValid()) {
     log.debug('Extension context invalidated, skipping config load.');
@@ -223,32 +255,4 @@ async function loadConfigAndApply(
   }
 }
 
-// eff: listen for playbackRate changes from injector (universal player support)
-// note: this enables bidirectional sync with custom players (YouTube, Netflix, etc.)
-function setupPlaybackRateListener(
-  state: PolicyExecutorState,
-  policyExecutor: import('../logic/policy-executor').PolicyExecutor
-): void {
-  window.addEventListener('message', (event) => {
-    if (event.data?.type === 'SPECTRA_RATE') {
-      const newSpeed = event.data.speed;
-      const readyState = event.data.readyState ?? 4;
 
-      // Avoid trivial updates
-      if (Math.abs((state.config.speed || 1) - newSpeed) < 0.05) return;
-
-      // rule: GENERIC SOLUTION for implicit defaults overriding configs during SPA navigation/loading
-      // Natively, setting the video src initiates a media swap, during which scripts reset playbackRate to 1.0 (readyState < 2 HAVE_CURRENT_DATA)
-      // A genuine user interaction (via browser UI config to 1x) would only practically occur when video is buffering/playing (readyState >= 2)
-      if (newSpeed === 1 && readyState < 2) {
-        log.debug(`[Universal] Ignored programmatic script reset to 1x during media context swap`);
-        return;
-      }
-
-      log.debug(`[Universal] External speed change: ${newSpeed}x`);
-
-      // Update config as native sync (don't trigger re-application)
-      policyExecutor.updateConfig({ speed: newSpeed }, { isNativeSync: true });
-    }
-  });
-}

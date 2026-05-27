@@ -1,6 +1,6 @@
 {
 	"name": "@nexus/extension-spectra",
-	"version": "1.3.3",
+	"version": "1.3.4",
 	"private": true,
 	"description": "SPECTRA - The Audio & Video Enhancement Extension",
 	"type": "module",
@@ -9,8 +9,10 @@
 		"build": "bun build.mjs --dev",
 		"build:prod": "bun build.mjs",
 		"build:copy": "powershell -Command \"Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue; Copy-Item -Recurse public dist\"",
-		"test:e2e": "bun build ; bun test/smoke.spec.ts",
-		"test:volume": "bun build ; bun test/verify-volume.spec.ts",
+		"test:e2e": "bun run build ; bun test test/smoke.spec.ts",
+		"test:volume": "bun run build ; bun test test/verify-volume.spec.ts",
+		"test:unit": "bun test test/registry.spec.ts",
+		"test": "bun test test/registry.spec.ts",
 		"typecheck": "bun tsc --noEmit"
 	},
 	"dependencies": {

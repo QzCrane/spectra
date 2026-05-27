@@ -9,7 +9,6 @@ import { logger } from '../../shared/logger';
 const log = logger.content;
 let isCaptureActive = false;
 let isPending = false;
-let updateTimer: ReturnType<typeof setTimeout> | null = null;
 let messenger: NexusMessenger | null = null;
 
 const notifyInjector = (active: boolean) => window.postMessage({ type: 'SPECTRA_CAPTURE_STATE', active }, '*');
