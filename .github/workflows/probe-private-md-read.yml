@@ -1,0 +1,36 @@
+name: Probe private md read
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm runner
+        run: echo PUBLIC_RUNNER_OK
+
+      - name: Test repository-scoped token against private md
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c http.extraheader="AUTHORIZATION: basic $auth" \
+            ls-remote https://github.com/QzCrane/md.git HEAD \
+            >/tmp/lsremote.out 2>/tmp/lsremote.err
+          rc=$?
+          if [ "$rc" -eq 0 ] && [ -s /tmp/lsremote.out ]; then
+            echo PRIVATE_MD_ACCESS_OK
+          else
+            echo PRIVATE_MD_ACCESS_DENIED
+          fi
+          exit 0
