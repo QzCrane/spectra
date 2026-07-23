@@ -1,51 +1,63 @@
-// goal: provides real-time detection of dynamic media element additions via DOM mutation monitoring
-// rule: uses a 500ms debounce to prevent performance degradation during rapid DOM updates
+// goal: project the single MediaRegistry into DOM-volume and shared-WebAudio ownership
 
-import { AudioMode } from '@nexus/audio-engine';
-import { WebAudioController } from '@nexus/audio-engine';
-import { isExtensionContextValid } from '../context-guard';
-import { debounce, createEventListener, createCleanupManager } from '../../utils/timing';
-import { hasMediaElements as hasMedia } from '../../utils/media-utils';
-import type { PolicyExecutorState } from '../../types';
+import { AudioMode, WebAudioController } from '@nexus/audio-engine';
 import type { PolicyExecutor } from '../../logic/policy-executor';
+import type { PolicyExecutorState } from '../../types';
+import { debounce } from '../../utils/timing';
+import { getActiveMediaRegistry } from '../media-registry';
 
-export const hasMediaElements = hasMedia;
+export function hasMediaElements(): boolean {
+	const registry = getActiveMediaRegistry();
+	return (registry?.size ?? 0) > 0;
+}
 
 export function createMediaObserver(
 	state: PolicyExecutorState,
 	audioController: WebAudioController,
-	policyExecutor: PolicyExecutor
+	policyExecutor: PolicyExecutor,
 ): () => void {
-	const cleanup = createCleanupManager();
+	const registry = getActiveMediaRegistry();
+	if (!registry) throw new Error('The document media registry is unavailable');
+	const disposers = new Map<string, () => void>();
+	const reconcilePolicy = debounce(() => policyExecutor.applyState(), 50);
 
-	const debouncedApply = debounce(() => {
-		if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) audioController.scanAndAttach();
-		policyExecutor.applyState();
-	}, 500);
-
-	const observer = new MutationObserver(() => {
-		if (!isExtensionContextValid()) return;
-		debouncedApply();
-	});
-
-	observer.observe(document.documentElement, { childList: true, subtree: true });
-	cleanup.add(() => observer.disconnect());
-
-	const immediateAttachHandler = (e: Event) => {
-		const t = e.target as HTMLElement;
-		if (t.nodeName !== 'AUDIO' && t.nodeName !== 'VIDEO') return;
-
-		if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) {
-			if (audioController.attachNode(t as HTMLMediaElement)) {
-				audioController.updateParams(state.config);
-			}
-		}
-		policyExecutor.applyState();
+	const register = (mediaId: string, element: HTMLMediaElement): void => {
+		if (disposers.has(mediaId)) return;
+		// The registry and NativeMediaExecutor already own all media events and
+		// standard-property writes. This projection owns only the optional audio
+		// graph attachment, so native/bypass registration stays side-effect-free.
+		disposers.set(mediaId, () => undefined);
+		if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) audioController.attachNode(element);
 	};
 
-	cleanup.add(createEventListener(document, 'play', immediateAttachHandler, true));
-	cleanup.add(createEventListener(document, 'loadeddata', immediateAttachHandler, true));
-	cleanup.add(debouncedApply.cancel);
+	const unregister = (mediaId: string): void => {
+		disposers.get(mediaId)?.();
+		disposers.delete(mediaId);
+	};
 
-	return cleanup.dispose;
+	for (const { element, target } of registry.list()) register(target.mediaId, element);
+	const unsubscribe = registry.subscribe((target, event, element) => {
+		if (event === 'registered') {
+			register(target.mediaId, element);
+			reconcilePolicy();
+			return;
+		}
+		if (event === 'removed') {
+			unregister(target.mediaId);
+			audioController.detachNode(element);
+			reconcilePolicy();
+			return;
+		}
+		if (event === 'loadedmetadata' || event === 'play') {
+			if (state.activeMode === AudioMode.NATIVE_WEBAUDIO) audioController.attachNode(element);
+			reconcilePolicy();
+		}
+	});
+
+	return () => {
+		unsubscribe();
+		reconcilePolicy.cancel();
+		for (const dispose of disposers.values()) dispose();
+		disposers.clear();
+	};
 }

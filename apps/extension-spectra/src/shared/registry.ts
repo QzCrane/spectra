@@ -1,7 +1,7 @@
 // goal: providing a unified interface for sub-millisecond precision cleanup of side effects
 // note: essential for zero-refresh hot-swap to prevent "zombie" listeners and resource leaks
 
-export type Disposable = () => void | { dispose: () => void };
+export type Disposable = (() => void) | { dispose: () => void };
 
 /**
  * Pinnacle Disposable Registry
@@ -16,9 +16,9 @@ export class Registry {
 	 */
 	track<T extends Disposable>(item: T): T {
 		if (typeof item === 'function') {
-			this.stack.push(item as () => void);
-		} else if (item && typeof (item as any).dispose === 'function') {
-			this.stack.push(() => (item as any).dispose());
+			this.stack.push(item);
+		} else {
+			this.stack.push(() => item.dispose());
 		}
 		return item;
 	}
@@ -32,7 +32,7 @@ export class Registry {
 			const cleanup = this.stack.pop();
 			try {
 				cleanup?.();
-			} catch (e) {
+			} catch {
 				// note: silent fail-fast to ensure all cleanups are attempted
 			}
 		}
@@ -51,12 +51,4 @@ export class Registry {
 		this.stack.push(() => target.removeEventListener(type, listener, options));
 	}
 
-	/**
-	 * Wrapper for setInterval
-	 */
-	setInterval(callback: (...args: any[]) => void, ms: number): ReturnType<typeof setInterval> {
-		const id = setInterval(callback, ms);
-		this.stack.push(() => clearInterval(id));
-		return id;
-	}
 }

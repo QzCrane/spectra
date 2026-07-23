@@ -1,5 +1,5 @@
 // goal: stateless engine to determine optimal audio mode based on environment and user intent
-// note: v3.5 lazy activation strategy - stays in NATIVE_LITE if volume <= 100 and no user interaction
+// note: legacy mode tokens map to transparent bypass, explicit Media WebAudio, or Capture
 
 import type {
   IPolicyEngine,
@@ -7,39 +7,33 @@ import type {
   AudioMode,
   SiteRule
 } from '@nexus/contracts';
+import { isDefaultAudioConfig, resolveAudioVolume } from '@nexus/contracts';
+import { requiresAudioProcessor } from './color-predictor.js';
 
 export class PolicyEngine implements IPolicyEngine {
-  // eff: detects if advanced features (EQ, Bass, Compressor, Visualizer, Volume > 100%) are active
-  private needsAdvancedProcessing(context: PolicyContext): boolean {
-    const { volume, visualizerEnabled, config } = context;
-    if (volume > 100) return true;
-    if (visualizerEnabled) return true;
-    if (config) {
-      if (config.eqValues?.some(v => v !== 0)) return true;
-      if (config.compressor) return true;
-      if (config.bass) return true;
-    }
-    return false;
-  }
-
   // eff: computes AudioMode using falling-priority rules:
-  // 1. Off -> NATIVE_LITE
-  // 2. Uninteracted + Normal Volume -> NATIVE_LITE (CPU preservation)
-  // 3. Simple Usage -> NATIVE_LITE
-  // 4. Force Native OR Not Restricted -> NATIVE_WEBAUDIO
-  // 5. Restricted -> CAPTURE
+  // 1. Off/default -> transparent bypass
+  // 2. Native-only controls -> transparent bypass
+  // 3. Explicit DSP with complete safe media coverage -> Media WebAudio
+  // 4. Explicit DSP without complete safe coverage -> authorized Capture
   public readonly calculateMode = (context: PolicyContext): AudioMode => {
-    const { enabled, forceNative, isRestricted, userInteracted, volume } = context;
+    const { enabled, isRestricted, userInteracted } = context;
 
-    if (!enabled) return 'NATIVE_LITE';
+    if (!enabled || (context.config && isDefaultAudioConfig(context.config))) {
+      return 'DISABLED';
+    }
 
-    if (!userInteracted && volume <= 100) {
+    if (!userInteracted
+		&& (!context.config || resolveAudioVolume(context.config).boost <= 1)) {
       return 'NATIVE_LITE';
     }
 
-    if (!this.needsAdvancedProcessing(context)) return 'NATIVE_LITE';
+	if (!context.config || !requiresAudioProcessor(context.config)) return 'NATIVE_LITE';
 
-    const restricted = forceNative ? false : (isRestricted ?? false);
+	// A preference flag cannot turn an unproven cross-origin resource into a
+	// safe MediaElementSource binding. Unknown/unsafe coverage always delegates
+	// to the acknowledged full-output path.
+    const restricted = isRestricted ?? false;
     return restricted ? 'CAPTURE' : 'NATIVE_WEBAUDIO';
   }
 

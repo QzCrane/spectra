@@ -7,8 +7,6 @@ interface MessagePayload<A extends NexusAction = NexusAction> {
   payload: NexusRequest<A>;
   tabId?: number;
   source?: 'popup' | 'content' | 'background' | 'offscreen' | 'sidepanel';
-  // target: routing hint for Offscreen dispatcher
-  target?: 'offscreen';
 }
 
 // goal: factory for INexusMessenger instances
@@ -62,31 +60,6 @@ export function createMessenger(source: MessagePayload['source'] = 'popup') {
         } else {
           console.error(`[NEXUS] Failed to send message to tab ${tabId}:`, error);
         }
-        throw error;
-      }
-    },
-
-    // eff: sends a message to the Offscreen Document (routed via Background)
-    async sendToOffscreen<A extends NexusAction>(
-      action: A,
-      tabId: number,
-      ...args: NexusRequest<A> extends void ? [] : [NexusRequest<A>]
-    ): Promise<NexusResponse<A>> {
-      const payload = args[0] as NexusRequest<A>;
-
-      const message: MessagePayload<A> = {
-        action,
-        payload,
-        tabId,
-        target: 'offscreen',
-        source
-      };
-
-      try {
-        const response = await chrome.runtime.sendMessage(message);
-        return response as NexusResponse<A>;
-      } catch (error) {
-        console.error(`[NEXUS] Failed to send message to offscreen:`, error);
         throw error;
       }
     }

@@ -11,7 +11,7 @@ export function formatKeyCombo(key: KeyCombo): string {
 	if (key.modifiers.meta) parts.push('Meta');
 
 	// note: strip internal 'Key', 'Digit', 'Arrow' prefixes to simplify display labels
-	let keyName = key.code
+	const keyName = key.code
 		.replace('Key', '')
 		.replace('Digit', '')
 		.replace('Arrow', '')
@@ -43,10 +43,23 @@ export function formatParams(action: HotkeyAction, params: NonNullable<HotkeyBin
 // eff: converts raw user input strings back into structured parameters appropriate for the selected HotkeyAction
 export function parseParams(action: HotkeyAction, value: string): HotkeyBinding['params'] {
 	switch (action) {
-		case 'speed_set': return { speed: parseFloat(value) || 1 };
-		case 'volume_set': return { volume: parseInt(value) || 100 };
-		case 'run_js': return { script: value };
-		case 'open_url': return { url: value };
+		case 'speed_set': {
+			const speed = Number(value);
+			return Number.isFinite(speed) && speed >= 0.1 && speed <= 16 ? { speed } : undefined;
+		}
+		case 'volume_set': {
+			const volume = Number(value);
+			return Number.isFinite(volume) && volume >= 0 && volume <= 800 ? { volume } : undefined;
+		}
+		case 'run_js': return value.trim() ? { script: value } : undefined;
+		case 'open_url': {
+			try {
+				const url = new URL(value.trim());
+				return url.protocol === 'http:' || url.protocol === 'https:' ? { url: url.href } : undefined;
+			} catch {
+				return undefined;
+			}
+		}
 		default: return undefined;
 	}
 }

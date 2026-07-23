@@ -1,106 +1,115 @@
-// goal: Video rotation, mirroring, screenshot
-// role: uses CSS transform for visual changes without modifying source
+// goal: save a verified visible video crop through Chrome without image IPC
 
-import { createLogger } from '../../shared/logger';
-import { simulateMouseHover } from '../utils/focus-helper';
-import { getPrimaryVideo } from '../utils/media-utils';
+import type { MediaTarget, ScreenshotResult } from '@nexus/contracts';
+import { sendSpectraRequest } from '../../shared/spectra-client';
+import { getActiveMediaRegistry } from '../core/media-registry';
 
-const log = createLogger('VideoTransform');
-
-const tfState = new WeakMap<HTMLVideoElement, { r: number; m: boolean }>();
-const cpState = new WeakMap<HTMLVideoElement, boolean>();
-
-function getState(v: HTMLVideoElement): { r: number; m: boolean } {
-	let s = tfState.get(v);
-	if (!s) { s = { r: 0, m: false }; tfState.set(v, s); }
-	return s;
+interface ScreenshotTargetProof {
+	video: HTMLVideoElement;
+	target: MediaTarget;
+	rect: ScreenshotRect;
+	expiresAt: number;
 }
 
-function apply(v: HTMLVideoElement) {
-	const s = getState(v);
-	const t: string[] = [];
-	if (s.r !== 0) t.push(`rotate(${s.r}deg)`);
-	if (s.m) t.push('scaleX(-1)');
-	v.style.transform = t.join(' ') || 'none';
-	log.info(`Transform: r=${s.r}, m=${s.m}`);
+interface ScreenshotRect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	viewportWidth: number;
+	viewportHeight: number;
 }
 
-export function rotateVideo(): number {
-	const v = getPrimaryVideo();
-	if (!v) return 0;
-	const s = getState(v);
-	s.r = (s.r + 90) % 360;
-	apply(v);
-	return s.r;
-}
+const pendingScreenshotTargets = new Map<string, ScreenshotTargetProof>();
+const SCREENSHOT_TARGET_TTL_MS = 10_000;
 
-export function toggleMirror(): boolean {
-	const v = getPrimaryVideo();
-	if (!v) return false;
-	const s = getState(v);
-	s.m = !s.m;
-	apply(v);
-	return s.m;
-}
-
-export function takeScreenshot(): string | null {
-	const v = getPrimaryVideo();
-	if (!v) return null;
-
-	try {
-		const cvs = document.createElement('canvas');
-		cvs.width = v.videoWidth;
-		cvs.height = v.videoHeight;
-		const ctx = cvs.getContext('2d');
-		if (!ctx) return null;
-
-		const s = getState(v);
-		ctx.save();
-		ctx.translate(cvs.width / 2, cvs.height / 2);
-		if (s.r !== 0) ctx.rotate((s.r * Math.PI) / 180);
-		if (s.m) ctx.scale(-1, 1);
-		ctx.drawImage(v, -v.videoWidth / 2, -v.videoHeight / 2);
-		ctx.restore();
-
-		const data = cvs.toDataURL('image/png');
-		const a = document.createElement('a');
-		a.href = data;
-		a.download = `screenshot_${Date.now()}.png`;
-		a.click();
-		return data;
-	} catch (e) {
-		log.error('Screenshot fail:', e);
-		return null;
+function currentScreenshotRect(video: HTMLVideoElement): ScreenshotRect {
+	const rect = video.getBoundingClientRect();
+	const viewport = window.visualViewport;
+	const viewportWidth = viewport?.width ?? document.documentElement.clientWidth;
+	const viewportHeight = viewport?.height ?? document.documentElement.clientHeight;
+	const offsetLeft = viewport?.offsetLeft ?? 0;
+	const offsetTop = viewport?.offsetTop ?? 0;
+	if (rect.width < 1 || rect.height < 1
+		|| rect.left < offsetLeft
+		|| rect.top < offsetTop
+		|| rect.right > offsetLeft + viewportWidth
+		|| rect.bottom > offsetTop + viewportHeight) {
+		throw new Error('The complete active video must be visible before taking a screenshot');
 	}
+	return {
+		x: rect.left - offsetLeft,
+		y: rect.top - offsetTop,
+		width: rect.width,
+		height: rect.height,
+		viewportWidth,
+		viewportHeight,
+	};
 }
 
-export async function toggleFullscreen(): Promise<boolean> {
-	const v = getPrimaryVideo();
-	if (!v) return false;
+function sameScreenshotRect(left: ScreenshotRect, right: ScreenshotRect): boolean {
+	return (Object.keys(left) as Array<keyof ScreenshotRect>)
+		.every((key) => Math.abs(left[key] - right[key]) <= 0.5);
+}
 
+export function verifyScreenshotTarget(captureToken: string): boolean {
+	const now = performance.now();
+	for (const [token, proof] of pendingScreenshotTargets) {
+		if (proof.expiresAt <= now) pendingScreenshotTargets.delete(token);
+	}
+	const proof = pendingScreenshotTargets.get(captureToken);
+	if (!proof || proof.video.mediaKeys
+		|| proof.video.videoWidth <= 0
+		|| proof.video.videoHeight <= 0
+		|| proof.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+		|| getActiveMediaRegistry()?.resolve(proof.target)?.element !== proof.video) return false;
 	try {
-		let r: boolean;
-		if (document.fullscreenElement === v) {
-			await document.exitFullscreen();
-			r = false;
-		} else {
-			await v.requestFullscreen();
-			r = true;
-		}
-		setTimeout(() => simulateMouseHover(v), 200);
-		return r;
-	} catch (e) {
-		log.error('FS fail:', e);
+		return sameScreenshotRect(currentScreenshotRect(proof.video), proof.rect);
+	} catch {
 		return false;
 	}
 }
 
-export function toggleCrop(): boolean {
-	const v = getPrimaryVideo();
-	if (!v) return false;
-	const c = !(cpState.get(v) ?? false);
-	v.style.objectFit = c ? 'cover' : 'contain';
-	cpState.set(v, c);
-	log.info(`Crop: ${c ? 'cover' : 'contain'}`);
-	return c;
+async function captureVisible(
+	video: HTMLVideoElement,
+	target: MediaTarget,
+	generation: number,
+): Promise<ScreenshotResult> {
+	if (video.mediaKeys) throw new Error('Protected media cannot be verified as a saved video frame');
+	if (video.videoWidth <= 0 || video.videoHeight <= 0
+		|| video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+		throw new Error('The active video has no current frame');
+	}
+	const rect = currentScreenshotRect(video);
+	if (getActiveMediaRegistry()?.resolve(target)?.element !== video) {
+		throw new Error('The active video source changed before screenshot capture');
+	}
+	const captureToken = crypto.randomUUID();
+	pendingScreenshotTargets.set(captureToken, {
+		video,
+		target: { ...target },
+		rect,
+		expiresAt: performance.now() + SCREENSHOT_TARGET_TTL_MS,
+	});
+	try {
+		const response = await sendSpectraRequest('spectra.screenshot.capture-visible', {
+			captureToken,
+			rect,
+		}, { documentId: target.documentId, generation });
+		if (!response.ok) throw new Error(response.error.message);
+		return response.data;
+	} finally {
+		pendingScreenshotTargets.delete(captureToken);
+	}
+}
+
+export async function takeScreenshot(
+	target: MediaTarget | null,
+	generation: number,
+): Promise<ScreenshotResult> {
+	const resolved = getActiveMediaRegistry()?.resolve(target) ?? null;
+	if (!resolved || !(resolved.element instanceof HTMLVideoElement)) {
+		throw new Error('No active video target');
+	}
+	return captureVisible(resolved.element, resolved.target, generation);
 }

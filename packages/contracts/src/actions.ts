@@ -1,5 +1,7 @@
 // goal: single source of truth for message action names and constants
 
+import type { NexusAction } from './messages/definitions.js';
+
 // Action name list
 export const NEXUS_ACTIONS = [
 	'AUDIO_GET_STATUS',
@@ -42,24 +44,34 @@ export const NEXUS_ACTIONS = [
 	'VIDEO_MARKER_LIST',
 	'TAB_REPORT_MEDIA',
 	'TAB_GET_VISIBLE_TABS',
+	'TAB_PIN',
+	'TAB_MUTE',
+	'OPEN_OPTIONS',
+	'OPEN_POPUP',
 	'GLOBAL_SETTINGS_UPDATE',
 	'REMOTE_GET_SESSION',
 	'REMOTE_CREATE_SESSION',
 	'REMOTE_CLOSE_SESSION',
-	'REMOTE_COMMAND',
 	'INJECT_CONTENT_SCRIPT',
-] as const;
+	'USER_SCRIPT_EXECUTE',
+	'HALO_GET_STATUS',
+	'HALO_TOOL_ACTIVATE',
+	'HALO_TOOL_DEACTIVATE',
+	'HALO_RULER_START',
+	'HALO_RULER_CANCEL',
+	'HALO_RULER_RESULT',
+	'HALO_SCROLL_TO_HEADING',
+	'HALO_CLIPBOARD_ADD',
+] as const satisfies readonly NexusAction[];
 
-export const OFFSCREEN_ACTIONS = [
-	'OFFSCREEN_START',
-	'OFFSCREEN_STOP',
-	'OFFSCREEN_UPDATE_CONFIG',
-	'OFFSCREEN_GET_VIZ',
-] as const;
+// Compile-time assertion: adding a protocol action requires adding its runtime constant here.
+const _allProtocolActionsAreListed: Exclude<NexusAction, typeof NEXUS_ACTIONS[number]> extends never
+	? true
+	: never = true;
+void _allProtocolActionsAreListed;
 
 // Derived types
 export type NexusActionName = typeof NEXUS_ACTIONS[number];
-export type OffscreenActionName = typeof OFFSCREEN_ACTIONS[number];
 
 type ActionMap<T extends readonly string[]> = { [K in T[number]]: K };
 
@@ -73,4 +85,3 @@ function createActionMap<T extends readonly string[]>(actions: T): ActionMap<T> 
 }
 
 export const Actions = createActionMap(NEXUS_ACTIONS);
-export const OffscreenActions = createActionMap(OFFSCREEN_ACTIONS);

@@ -2,9 +2,6 @@
 
 import type { SettingsUIElements } from '../types';
 import { RESTRICTED_URL_PREFIXES } from '../constants';
-import { createMessenger } from '@nexus/kernel';
-
-export const messenger = createMessenger('popup');
 
 export function $<T extends HTMLElement>(id: string): T | null {
   return document.getElementById(id) as T | null;
@@ -41,39 +38,50 @@ export function getDomain(url: string): string {
   }
 }
 
+// Browser-provided tab metadata crosses into an extension document. Keep image
+// navigation to known image/data and browser URL schemes before assigning src.
+export function getSafeImageUrl(value: string | undefined, fallback: string): string {
+  if (!value) return fallback;
+  if (/^data:image\/(?:png|jpe?g|gif|webp|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$/iu.test(value)) {
+    return value;
+  }
+  try {
+    const url = new URL(value);
+    return ['https:', 'http:', 'chrome:', 'chrome-extension:'].includes(url.protocol) ? url.href : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// post: resolves a site icon through Chromium's extension-owned favicon endpoint
+// so remote icon hosts, page CSP, and chrome://favicon URLs cannot erase identity.
+export function getWebsiteIconUrl(
+  pageUrl: string | undefined,
+  faviconUrl: string | undefined,
+  fallback: string,
+  size = 32,
+): string {
+  const direct = getSafeImageUrl(faviconUrl, '');
+  if (direct.startsWith('data:image/')) return direct;
+
+  try {
+    const page = new URL(pageUrl ?? '');
+    if (['http:', 'https:', 'file:', 'chrome:', 'edge:'].includes(page.protocol)) {
+      const endpoint = new URL(chrome.runtime.getURL('_favicon/'));
+      endpoint.searchParams.set('pageUrl', page.href);
+      endpoint.searchParams.set('size', String(Math.max(16, Math.min(64, Math.round(size)))));
+      return endpoint.href;
+    }
+  } catch {
+    // Invalid/missing page URLs may still carry a browser-provided HTTP icon.
+  }
+
+  return direct || fallback;
+}
+
 // rule: identifies browser-internal or restricted URLs (e.g. chrome://, edge://) where extensions are disabled
 export function isRestrictedUrl(url: string | undefined): boolean {
   if (!url) return true;
   return RESTRICTED_URL_PREFIXES.some(prefix => url.startsWith(prefix));
 }
-
-// eff: tunnels messages from the popup to a specific tab via the kernel messenger
-export async function sendToTab<T = unknown>(tabId: number, action: string, payload: unknown = {}): Promise<T | null> {
-  console.log(`[Popup→Tab] Sending ${action} to tab ${tabId}`, payload);
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await messenger.sendToTab(tabId, action as any, payload as any) as T;
-    console.log(`[Popup←Tab] Got response for ${action}:`, result);
-    return result;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('Receiving end does not exist')) {
-      console.debug(`[Popup] sendToTab skipped for ${action} (no content script)`);
-    } else {
-      console.error(`[Popup] sendToTab failed for ${action}:`, error);
-    }
-    return null;
-  }
-}
-
-// eff: tunnels messages from the popup to the background worker via the kernel messenger
-export async function sendToBackground<T = unknown>(action: string, payload: unknown = {}): Promise<T | null> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return await messenger.send(action as any, payload as any) as T;
-  } catch (error) {
-    console.debug(`[Popup] sendToBackground failed for ${action}:`, error);
-    return null;
-  }
-}
-
 

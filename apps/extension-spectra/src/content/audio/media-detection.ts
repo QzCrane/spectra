@@ -1,21 +1,13 @@
-import { logger } from '../../shared/logger';
-import { needsTracking, setupPauseTracking, updatePausedAt } from '../utils/pause-tracker';
-import { iterateMedia, hasMediaElements as hasMedia, isAnyMediaPlaying as isPlaying } from '../utils/media-utils';
+// goal: pure playback-state projection over the event-driven MediaRegistry
 
-const log = logger.content;
+import { getActiveMediaRegistry } from '../core/media-registry';
 
 export function isAnyMediaPlaying(): boolean {
-	let hasPlaying = false;
-	let hasMedia = false;
-
-	for (const m of iterateMedia()) {
-		hasMedia = true;
-		if (!m.paused) hasPlaying = true;
-		if (needsTracking(m)) setupPauseTracking(m, () => isPlaying());
-	}
-
-	updatePausedAt(hasPlaying, hasMedia);
-	return hasPlaying;
+	const registry = getActiveMediaRegistry();
+	if (!registry) return false;
+	return registry.hasPlayingMedia();
 }
 
-export const hasMediaElements = hasMedia;
+export function hasMediaElements(): boolean {
+	return (getActiveMediaRegistry()?.size ?? 0) > 0;
+}

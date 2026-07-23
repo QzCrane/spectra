@@ -1,25 +1,25 @@
 // goal: unified debounce/throttle utilities with cleanup support
 
-export interface DebouncedFn<T extends (...args: any[]) => any> {
-	(...args: Parameters<T>): void;
+export interface DebouncedFn<TArgs extends unknown[]> {
+	(...args: TArgs): void;
 	cancel: () => void;
 	flush: () => void;
 }
 
-export interface ThrottledFn<T extends (...args: any[]) => any> {
-	(...args: Parameters<T>): void;
+export interface ThrottledFn<TArgs extends unknown[]> {
+	(...args: TArgs): void;
 	cancel: () => void;
 }
 
 // eff: debounce with cancel/flush support
-export function debounce<T extends (...args: any[]) => any>(
-	fn: T,
+export function debounce<TArgs extends unknown[]>(
+	fn: (...args: TArgs) => unknown,
 	wait: number
-): DebouncedFn<T> {
+): DebouncedFn<TArgs> {
 	let timer: ReturnType<typeof setTimeout> | null = null;
-	let lastArgs: Parameters<T> | null = null;
+	let lastArgs: TArgs | null = null;
 
-	const debounced = (...args: Parameters<T>) => {
+	const debounced = (...args: TArgs) => {
 		lastArgs = args;
 		if (timer) clearTimeout(timer);
 		timer = setTimeout(() => {
@@ -42,14 +42,14 @@ export function debounce<T extends (...args: any[]) => any>(
 }
 
 // eff: throttle with cancel support
-export function throttle<T extends (...args: any[]) => any>(
-	fn: T,
+export function throttle<TArgs extends unknown[]>(
+	fn: (...args: TArgs) => unknown,
 	wait: number
-): ThrottledFn<T> {
+): ThrottledFn<TArgs> {
 	let timer: ReturnType<typeof setTimeout> | null = null;
-	let lastArgs: Parameters<T> | null = null;
+	let lastArgs: TArgs | null = null;
 
-	const throttled = (...args: Parameters<T>) => {
+	const throttled = (...args: TArgs) => {
 		lastArgs = args;
 		if (!timer) {
 			timer = setTimeout(() => {

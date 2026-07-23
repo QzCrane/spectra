@@ -3,26 +3,20 @@
 
 import { AudioMode, WebAudioController } from '@nexus/audio-engine';
 import { logger } from '../../../shared/logger';
-import { getPrimaryMedia } from '../../utils/media-utils';
-import { getSiteBridge } from '../../logic/site-bridge/registry';
 import type { PolicyExecutorState } from '../../types';
 import type { PolicyExecutor } from '../../logic/policy-executor';
 
 const log = logger.content;
 
 // eff: Statically allocated listener to avoid repeated closure creation
-let listenerCtx: { state: PolicyExecutorState; ctrl: WebAudioController; exec: PolicyExecutor; probed: boolean } | null = null;
+let listenerCtx: { state: PolicyExecutorState; ctrl: WebAudioController; exec: PolicyExecutor; cleanup: () => void } | null = null;
 
 function handleGesture() {
 	if (!listenerCtx) return;
-	const { state, ctrl, exec } = listenerCtx;
+	const context = listenerCtx;
+	const { state, ctrl, exec } = context;
 	state.hasGesture = true;
-	state.userHasInteracted = true;
-
-	if (!listenerCtx.probed) {
-		listenerCtx.probed = true;
-		exec.probeCors();
-	}
+	context.cleanup();
 
 	if (state.activeMode === AudioMode.NATIVE_WEBAUDIO && !ctrl.isReady()) {
 		log.debug('[Interact] Retry WebAudio init');
@@ -36,43 +30,27 @@ export function setupUserGestureListeners(
 	audioController: WebAudioController,
 	policyExecutor: PolicyExecutor
 ): () => void {
-	listenerCtx = { state, ctrl: audioController, exec: policyExecutor, probed: false };
 	const evts = ['click', 'keydown', 'touchstart', 'mousedown'];
-
-	for (const e of evts) {
-		document.addEventListener(e, handleGesture, { once: true, passive: true });
-	}
-
-	return () => {
+	const cleanup = () => {
 		for (const e of evts) {
 			document.removeEventListener(e, handleGesture);
 		}
-		listenerCtx = null;
+		if (listenerCtx?.cleanup === cleanup) listenerCtx = null;
 	};
+	listenerCtx = { state, ctrl: audioController, exec: policyExecutor, cleanup };
+	for (const event of evts) document.addEventListener(event, handleGesture, { passive: true });
+	return cleanup;
 }
 
-export function setupPopupConnectionListener(state: PolicyExecutorState, onPopupOpen?: () => void): void {
-	if (typeof chrome === 'undefined' || !chrome.runtime?.onConnect) return;
+export function setupPopupConnectionListener(state: PolicyExecutorState): () => void {
+	if (typeof chrome === 'undefined' || !chrome.runtime?.onConnect) return () => { };
 
-	chrome.runtime.onConnect.addListener((port) => {
+	const listener = (port: chrome.runtime.Port) => {
 		if (port.name === 'popup-connection') {
 			state.isPopupOpen = true;
-			state.userHasInteracted = true;
-			syncDomVolumeToState(state);
-			onPopupOpen?.();
 			port.onDisconnect.addListener(() => { state.isPopupOpen = false; });
 		}
-	});
-}
-
-function syncDomVolumeToState(state: PolicyExecutorState): void {
-	const bridge = getSiteBridge();
-	if (!bridge.canPullInitialState()) return;
-
-	const media = getPrimaryMedia();
-	if (!media) return;
-
-	if (!state.userHasInteracted) {
-		state.config.volume = (media.volume * 100) | 0;
-	}
+	};
+	chrome.runtime.onConnect.addListener(listener);
+	return () => chrome.runtime.onConnect.removeListener(listener);
 }

@@ -1,118 +1,39 @@
 // goal: routes audio processing commands to the appropriate execution layer (DOM, WebAudio, or Tab Capture) based on the active policy mode
 
-import { AudioMode } from '@nexus/audio-engine';
-import type { AudioConfig } from '@nexus/kernel';
+import {
+	AudioMode,
+	assessMediaSourceCoverage,
+	audioGraphSignature,
+	requiresAudioProcessor,
+	type AudioGraphSnapshot,
+} from '@nexus/audio-engine';
+import { DEFAULT_AUDIO_CONFIG, type AudioConfig } from '@nexus/kernel';
+import { resolveAudioVolume, type CaptureAdmission } from '@nexus/contracts';
 import type { PolicyExecutorDeps, PolicyExecutorState } from '../types';
-import { setDomVolume, releaseVolumeLock, enableVolumeLock, setNativeVolumeCallback, setNativeSpeedCallback } from '../audio/dom-volume';
 import { isAnyMediaPlaying } from '../audio/media-detection';
-import { setSpeed } from './media-control';
-import { applyToMedia, getPrimaryMedia } from '../utils/media-utils';
-import { getSiteBridge } from './site-bridge/registry';
 import { logger } from '../../shared/logger';
+import { getActiveMediaRegistry } from '../core/media-registry';
 
 const log = logger.content;
 
-let currentState: PolicyExecutorState | null = null;
-let currentDeps: PolicyExecutorDeps | null = null;
 let currentUpdateBadge: (() => void) | null = null;
 let currentBroadcastUI: (() => void) | null = null;
-let currentUpdateConfig: ((changes: Partial<AudioConfig>, options?: { isNativeSync?: boolean }) => void) | null = null;
-let lastWebAudioActive = false;
-
-// eff: broadcasts WEBAUDIO mode state to injector for fullscreen handling
-function notifyWebAudioState(active: boolean): void {
-	if (lastWebAudioActive !== active) {
-		lastWebAudioActive = active;
-		window.postMessage({ type: 'SPECTRA_WEBAUDIO_STATE', active }, '*');
-	}
-}
-
-// eff: binds shared state and cross-module callbacks to the mode executor
-// eff: register global handler for native changes
-function handleNativeVolume(volume: number, muted: boolean) {
-	if (!currentState || !currentDeps || !currentUpdateConfig) return;
-
-	const bridge = getSiteBridge();
-	if (bridge.shouldInhibitDomSync()) return;
-
-	const newVol = (volume * 100) | 0;
-	const lastVol = currentState.config.volume;
-
-	const ch: Partial<AudioConfig> = {};
-	if (volume < 0) {
-		ch.muted = muted;
-		log.debug(`[Native] Mute: ${muted}`);
-	} else {
-		ch.volume = newVol;
-		ch.muted = muted;
-		log.debug(`[Native] Vol: ${ch.volume}%`);
-	}
-	currentUpdateConfig(ch, { isNativeSync: true });
-}
-
-function handleNativeSpeed(speed: number) {
-	if (!currentUpdateConfig || !currentState) return;
-	const bridge = getSiteBridge();
-	if (bridge.shouldInhibitDomSync()) return;
-
-	// rule: new media elements default to playbackRate=1.0, triggering ratechange
-	// this must NOT override the user's intended speed setting
-	const userSpeed = currentState.config.speed || 1;
-	if (Math.abs(speed - 1) < 0.005 && Math.abs(userSpeed - 1) > 0.005) {
-		log.debug(`[Native] Speed guard: ignoring 1x default, re-applying ${userSpeed}x`);
-		setSpeed(userSpeed);
-		return;
-	}
-
-	log.debug(`[Native] Speed: ${speed}x`);
-	currentUpdateConfig({ speed }, { isNativeSync: true });
-}
-
-function handleSiteSyncBack(changes: Partial<AudioConfig>, options?: { isNativeSync?: boolean }) {
-	if (!currentState || !currentUpdateConfig) return;
-
-	// rule: [Boost Guard] Prevent native ceiling reports (100%) from overwriting plugin boost (>100%)
-	if (changes.volume === 100 && currentState.config.volume > 100) {
-		log.debug(`[SiteBridge] Guard: Ignoring 100% report while boosting at ${currentState.config.volume}%`);
-		delete changes.volume;
-		if (Object.keys(changes).length === 0) return;
-	}
-
-	// rule: prevent loop - ignore if diff is too small
-	const volDiff = changes.volume !== undefined ? Math.abs(currentState.config.volume - changes.volume) : 0;
-	const speedDiff = changes.speed !== undefined ? Math.abs((currentState.config.speed || 1) - changes.speed) : 0;
-	const muteDiff = changes.muted !== undefined ? currentState.config.muted !== changes.muted : false;
-
-	// use previously approved thresholds (1% volume, 0.05 speed)
-	if (volDiff < 1 && speedDiff < 0.05 && !muteDiff && Object.keys(changes).length > 0) {
-		return;
-	}
-
-	log.debug(`[SiteBridge] Auth Sync Accepted:`, changes);
-	currentUpdateConfig(changes, options ?? { isNativeSync: true });
-}
+let executionRun = 0;
+const CAPTURE_ADMISSION_REQUIRED = 'Capture requires a current-tab extension invocation';
 
 export function initModeExecutorCallbacks(
-	deps: PolicyExecutorDeps,
-	state: PolicyExecutorState,
+	_deps: PolicyExecutorDeps,
+	_state: PolicyExecutorState,
 	updateBadge: () => void,
 	broadcastUI: () => void,
-	applyState: () => void,
-	updateConfig: (changes: Partial<AudioConfig>, options?: { isNativeSync?: boolean }) => void
-): void {
-	currentState = state;
-	currentDeps = deps;
+	_updateConfig: (changes: Partial<AudioConfig>, options?: { isNativeSync?: boolean }) => void
+): () => void {
 	currentUpdateBadge = updateBadge;
 	currentBroadcastUI = broadcastUI;
-	currentUpdateConfig = updateConfig;
-
-	setNativeVolumeCallback(handleNativeVolume);
-	setNativeSpeedCallback(handleNativeSpeed);
-
-	// rule: initialize active site bridge
-	getSiteBridge().onInitialize({
-		updateConfig: handleSiteSyncBack
-	});
+	return () => {
+		currentUpdateBadge = null;
+		currentBroadcastUI = null;
+	};
 }
 
 // post: returns true if the user has engaged with the page, making it safe to initialize AudioContext
@@ -129,94 +50,428 @@ export function hasUserGesture(state: PolicyExecutorState): boolean {
 }
 
 // eff: orchestrates audio modifications by dispatching to specialized controllers based on activeMode
-export function executeMode(deps: PolicyExecutorDeps, state: PolicyExecutorState): void {
+export function executeMode(
+	deps: PolicyExecutorDeps,
+	state: PolicyExecutorState,
+	advanceGeneration = false,
+	captureAdmission?: CaptureAdmission,
+): Promise<void> {
+	const run = executionRun + 1;
+	executionRun = run;
+	if (advanceGeneration) state.generation += 1;
+	return executeModeTransition(deps, state, run, state.generation, captureAdmission);
+}
+async function executeModeTransition(
+	deps: PolicyExecutorDeps,
+	state: PolicyExecutorState,
+	run: number,
+	generation: number,
+	captureAdmission?: CaptureAdmission,
+): Promise<void> {
 	const { audioController, captureManager } = deps;
 	const mode = state.activeMode;
 	const config = state.config;
+	const previousActualMode = state.actualMode;
+	const previousAppliedConfig = cloneAudioConfig(state.appliedConfig);
 
-	// eff: sync playback speed - always apply to ensure consistency on page load/navigation
-	const currentSpeed = config.speed || 1.0;
-	setSpeed(currentSpeed);
+	// A pending START owns no acknowledged processor yet, so it cannot be made
+	// transparent. Let it settle before bringing up a replacement path; once it
+	// becomes active the normal handoff below first applies a unity config. This
+	// prevents a delayed START from overlapping WebAudio/DOM or surviving disable.
+	if (captureManager.isPending()) {
+		await captureManager.waitForSettled();
+		if (run !== executionRun) return;
+	}
 
 	if (mode === AudioMode.CAPTURE) {
-		notifyWebAudioState(false); // exiting WEBAUDIO mode
+		// The optional media processor is made transparent before Capture starts.
+		// Standard page volume/mute remain native and are never a mode-owned path.
+		await audioController.cleanup();
 		if (captureManager.isActive()) {
-			// note: capture mode targets the offscreen document; domestic volume locks are released
-			releaseVolumeLock();
-			captureManager.syncConfig(config);
-			// note: capture-manager will notify injector via SPECTRA_CAPTURE_STATE
-		} else if (hasUserGesture(state)) {
-			// log: requesting capture upgrade due to user interaction in capture-eligible mode
-			log.capture('Strategy suggests CAPTURE and gesture detected, requesting...');
-			captureManager.request(true, config);
-			fallbackToDom(config);
+			state.phase = 'starting';
+			const synced = await captureManager.syncConfig(config, generation);
+			if (run !== executionRun) return;
+			state.generation = Math.max(state.generation, captureManager.getGeneration());
+			state.actualMode = 'capture';
+			state.phase = synced ? 'active' : 'error';
+			if (synced) state.appliedConfig = cloneAudioConfig(synced);
+			state.lastError = synced ? undefined : captureManager.getLastError();
+		} else if (captureAdmission === 'extension-invocation') {
+			log.capture('Strategy suggests CAPTURE and current-tab invocation is admitted, requesting...');
+			state.phase = 'starting';
+			const result = await captureManager.request(true, config, generation);
+			if (run !== executionRun) return;
+			if (result.phase === 'active') {
+				state.generation = result.generation ?? run;
+				state.actualMode = 'capture';
+				state.phase = 'active';
+				state.appliedConfig = result.actualConfig
+					? cloneAudioConfig(result.actualConfig)
+					: captureManager.getActualConfig() ?? transparentAudioConfig();
+				state.lastError = undefined;
+			} else if (result.active) {
+				state.actualMode = 'capture';
+				state.phase = 'error';
+				state.appliedConfig = result.actualConfig
+					? cloneAudioConfig(result.actualConfig)
+					: captureManager.getActualConfig() ?? transparentAudioConfig();
+				state.lastError = result.error ?? 'Capture actual configuration is unavailable';
+			} else {
+				// Restore the last acknowledged path when capture startup fails.
+				const restoredWebAudio = previousActualMode === 'webaudio'
+					? await restoreWebAudioState(previousAppliedConfig, deps).catch(() => null)
+					: null;
+				if (restoredWebAudio) {
+					state.actualMode = 'webaudio';
+					state.appliedConfig = restoredWebAudio;
+				} else {
+					state.actualMode = 'bypass';
+					state.appliedConfig = toDomAppliedConfig(config);
+				}
+				state.phase = 'error';
+				state.lastError = result.error;
+			}
 		} else {
-			fallbackToDom(config);
+			state.actualMode = 'bypass';
+			state.phase = 'error';
+			state.appliedConfig = toDomAppliedConfig(config);
+			state.lastError = CAPTURE_ADMISSION_REQUIRED;
 		}
 
+	} else if (mode === AudioMode.DISABLED) {
+		if (captureManager.isActive() || captureManager.isPending()) {
+			const transparentActual = captureManager.isActive()
+				? await captureManager.syncConfig(transparentAudioConfig(), generation)
+				: null;
+			if (captureManager.isActive() && !transparentActual) {
+				state.actualMode = 'capture';
+				state.phase = 'error';
+				state.lastError = captureManager.getLastError();
+				currentUpdateBadge?.();
+				currentBroadcastUI?.();
+				return;
+			}
+			if (run !== executionRun) return;
+			await audioController.cleanup();
+			state.phase = 'stopping';
+			const result = await captureManager.request(false, config, generation);
+			if (run !== executionRun) return;
+			state.generation = result.generation ?? run;
+			if (result.status === 'error' && result.active) {
+				// The retained capture processor was acknowledged transparent before
+				// shutdown. Playback is therefore bypass, even though its lease remains
+				// alive for a retry.
+				state.actualMode = 'bypass';
+				state.phase = 'error';
+				state.appliedConfig = transparentActual ?? transparentAudioConfig();
+				state.lastError = result.error;
+				currentUpdateBadge?.();
+				currentBroadcastUI?.();
+				return;
+			}
+		}
+		await audioController.cleanup();
+		state.actualMode = 'bypass';
+		state.phase = 'idle';
+		state.appliedConfig = transparentAudioConfig();
+		state.lastError = undefined;
 	} else if (mode === AudioMode.NATIVE_LITE) {
-		notifyWebAudioState(false); // exiting WEBAUDIO mode
-		// mode: strictly uses DOM volume overrides and setter-redirection via 'enableVolumeLock'
-		const domVol = config.muted ? 0 : Math.min(1, config.volume / 100);
-		enableVolumeLock(domVol, config.muted);
-		// rule: sync YouTube native UI
-		getSiteBridge().syncVolume(config.volume, config.muted);
+		if (captureManager.isActive() || captureManager.isPending()) {
+			const transparentActual = captureManager.isActive()
+				? await captureManager.syncConfig(transparentAudioConfig(), generation)
+				: null;
+			if (captureManager.isActive() && !transparentActual) {
+				state.actualMode = 'capture';
+				state.phase = 'error';
+				state.lastError = captureManager.getLastError();
+				currentUpdateBadge?.();
+				currentBroadcastUI?.();
+				return;
+			}
+			if (run !== executionRun) return;
+			// Native standard-media state is already live; only the processor lease
+			// needs to leave its transparent handoff state.
+			await audioController.cleanup();
+			state.phase = 'stopping';
+			const result = await captureManager.request(false, config, generation);
+			if (run !== executionRun) return;
+			state.generation = result.generation ?? run;
+			if (result.status === 'error' && result.active) {
+				// DOM is the applied path; the retained capture graph is unity-only.
+				state.actualMode = 'bypass';
+				state.phase = 'error';
+				state.appliedConfig = toDomAppliedConfig(config);
+				state.lastError = result.error;
+				currentUpdateBadge?.();
+				currentBroadcastUI?.();
+				return;
+			}
+		}
+		await audioController.cleanup();
+		// Native-lite is zero DSP. NativeMediaExecutor continues to own any
+		// explicit standard media controls independently of this mode.
+		state.actualMode = 'bypass';
+		state.phase = 'idle';
+		state.appliedConfig = toDomAppliedConfig(config);
 
 	} else if (mode === AudioMode.NATIVE_WEBAUDIO) {
+		const handingOffCapture = captureManager.isActive() || captureManager.isPending();
+		const registry = getActiveMediaRegistry();
+		const mediaElements = (registry?.list() ?? []).map(({ element }) => element);
+		const evidenceFor = (element: HTMLMediaElement) =>
+			typeof registry?.getEligibilityEvidence === 'function'
+				? registry.getEligibilityEvidence(element)
+				: undefined;
+		const prospectiveCoverage = assessMediaSourceCoverage(mediaElements, evidenceFor);
+		if (!prospectiveCoverage.fullCoverage) {
+			await audioController.cleanup();
+			if (captureManager.isActive()) {
+				const restored = await captureManager.syncConfig(config, generation);
+				if (run !== executionRun) return;
+				state.actualMode = restored ? 'capture' : 'bypass';
+				state.appliedConfig = restored
+					? cloneAudioConfig(restored)
+					: transparentAudioConfig();
+				state.phase = restored ? 'active' : 'error';
+				state.lastError = restored
+					? undefined
+					: captureManager.getLastError() ?? 'Media WebAudio coverage is incomplete';
+			} else if (requiresAudioProcessor(config)
+				&& captureAdmission === 'extension-invocation') {
+				// rule: Capture is the last-resort full-output path (SCTRL-011).
+				// When Media WebAudio coverage fails but a processor is explicitly
+				// needed (volume > 100, EQ, bass, etc.), capture can still serve
+				// the request because tabCapture is not blocked by page CORS.
+				// Background admission is required because Capture is bound to a
+				// current-tab extension invocation. This also covers the case
+				// where a site was mistakenly pinned to `direct` in the registry
+				// but the page's media sources are in fact cross-origin.
+				log.capture('WebAudio coverage failed with active processor need, falling back to Capture');
+				state.phase = 'starting';
+				const result = await captureManager.request(true, config, generation);
+				if (run !== executionRun) return;
+				if (result.phase === 'active') {
+					state.generation = result.generation ?? run;
+					state.actualMode = 'capture';
+					state.phase = 'active';
+					state.appliedConfig = result.actualConfig
+						? cloneAudioConfig(result.actualConfig)
+						: captureManager.getActualConfig() ?? transparentAudioConfig();
+					state.lastError = undefined;
+				} else {
+					state.actualMode = 'bypass';
+					state.phase = 'error';
+					state.appliedConfig = toDomAppliedConfig(config);
+					state.lastError = result.error ?? 'Capture fallback failed after WebAudio coverage failure';
+				}
+			} else {
+				state.actualMode = 'bypass';
+				state.phase = 'error';
+				state.appliedConfig = toDomAppliedConfig(config);
+				state.lastError = requiresAudioProcessor(config)
+					? CAPTURE_ADMISSION_REQUIRED
+					: prospectiveCoverage.eligibility === 'unknown'
+						? 'Media WebAudio coverage is not yet proven'
+						: 'Media WebAudio coverage is unsafe';
+			}
+			currentUpdateBadge?.();
+			currentBroadcastUI?.();
+			return;
+		}
+		const transparentCaptureActual = captureManager.isActive()
+			? await captureManager.syncConfig(transparentAudioConfig(), generation)
+			: null;
+		if (captureManager.isActive() && !transparentCaptureActual) {
+			state.actualMode = 'capture';
+			state.phase = 'error';
+			state.lastError = captureManager.getLastError();
+			currentUpdateBadge?.();
+			currentBroadcastUI?.();
+			return;
+		}
+		if (run !== executionRun) return;
 
 		if (hasUserGesture(state)) {
 			// rule: always attempt to initialize or resume the context if we have a gesture
 			// this handles cases where it's 'ready' but suspended
-			audioController.initialize(true).then((success) => {
-				if (success) {
-					notifyWebAudioState(true); // entering/active in WEBAUDIO mode
-					applyWebAudioState(config, deps);
-				} else {
-					notifyWebAudioState(false);
-					log.debug('WebAudio resume/init failed -> fallback to DOM');
-					fallbackToDom(config);
+			state.phase = 'starting';
+			const success = await audioController.initialize(true);
+			if (run !== executionRun) return;
+			if (success) {
+				const attached = mediaElements.every((element) =>
+					audioController.ensureAttached(element, evidenceFor(element)));
+				let graphError: string | undefined;
+				let graphActual: AudioConfig | null = null;
+				if (!attached || !audioController.hasCompleteCoverage(mediaElements, evidenceFor)) {
+					graphError = 'Media WebAudio did not bind the complete registry scope';
+				} else try {
+					graphActual = await applyWebAudioState(config, deps);
+				} catch (error) {
+					log.warn('WebAudio graph apply failed', error);
+					graphError = error instanceof Error ? error.message : String(error);
 				}
-			});
+				if (!graphError && !graphActual) graphError = 'WebAudio graph returned no actual configuration';
+				if (graphError) {
+					await audioController.cleanup();
+					if (captureManager.isActive()) {
+						const restored = await captureManager.syncConfig(config, generation);
+						if (run !== executionRun) return;
+						state.actualMode = restored ? 'capture' : 'bypass';
+						state.appliedConfig = restored
+							? cloneAudioConfig(restored)
+							: transparentAudioConfig();
+						state.lastError = restored
+							? graphError
+							: captureManager.getLastError() ?? graphError;
+					} else {
+						state.actualMode = 'bypass';
+						state.appliedConfig = toDomAppliedConfig(config);
+						state.lastError = graphError;
+					}
+					state.phase = 'error';
+					currentUpdateBadge?.();
+					currentBroadcastUI?.();
+					return;
+				}
+				if (handingOffCapture) {
+					const result = await captureManager.request(false, config, generation);
+					if (run !== executionRun) return;
+					state.generation = result.generation ?? run;
+					if (result.status === 'error' && result.active) {
+						// WebAudio is already confirmed and capture was switched to unity.
+						state.actualMode = 'webaudio';
+						state.phase = 'error';
+						state.appliedConfig = graphActual ?? toDomAppliedConfig(config);
+						state.lastError = result.error;
+						currentUpdateBadge?.();
+						currentBroadcastUI?.();
+						return;
+					}
+				}
+				state.actualMode = 'webaudio';
+				state.phase = 'active';
+				state.appliedConfig = graphActual ?? toDomAppliedConfig(config);
+				state.lastError = undefined;
+			} else {
+				if (captureManager.isActive()) {
+					const restored = await captureManager.syncConfig(config, generation);
+					state.actualMode = 'capture';
+					state.appliedConfig = restored
+						? cloneAudioConfig(restored)
+						: transparentAudioConfig();
+				} else {
+					log.debug('WebAudio resume/init failed -> transparent native path');
+					state.actualMode = 'bypass';
+					state.appliedConfig = toDomAppliedConfig(config);
+				}
+				state.phase = 'error';
+				state.lastError = 'Unable to start WebAudio';
+			}
 		} else {
-			notifyWebAudioState(false);
-			fallbackToDom(config);
+			state.actualMode = 'bypass';
+			state.phase = 'idle';
+			state.appliedConfig = toDomAppliedConfig(config);
 		}
 	}
+
+	if (run === executionRun) {
+		currentUpdateBadge?.();
+		currentBroadcastUI?.();
+	}
+}
+function transparentAudioConfig(): AudioConfig {
+	return {
+		...DEFAULT_AUDIO_CONFIG,
+		eqValues: [...DEFAULT_AUDIO_CONFIG.eqValues],
+	};
+}
+
+function cloneAudioConfig(config: AudioConfig): AudioConfig {
+	return { ...config, eqValues: [...config.eqValues] };
+}
+
+// post: describes only controls the native media-element path can implement.
+// Unsupported DSP fields are neutral so snapshots never claim an EQ/boost that
+// a capture/WebAudio startup failure did not apply.
+export function toDomAppliedConfig(config: AudioConfig): AudioConfig {
+	const volume = resolveAudioVolume(config);
+	return {
+		...config,
+		volume: volume.volumeBase,
+		volumeBase: volume.volumeBase,
+		boost: 1,
+		compressor: false,
+		mono: false,
+		bass: false,
+		eqValues: [...DEFAULT_AUDIO_CONFIG.eqValues],
+		pan: 0,
+		delay: 0,
+	};
+}
+
+// post: compensates for the DOM attenuation owned by SPECTRA so every media
+// graph has the same effective output, including elements inserted by an SPA.
+export function toWebAudioProcessingConfig(config: AudioConfig): AudioConfig {
+	const volume = resolveAudioVolume(config);
+	return {
+		...config,
+		volume: volume.effectiveVolume,
+		volumeBase: volume.volumeBase,
+		boost: volume.boost,
+	};
 }
 
 // eff: applies WebAudio processing while maintaining visual sync with native volume slider
 // theory: for <= 100%, we let DOM handle attenuation (visual sync). For > 100%, we lock DOM to 100% and apply boost via WebAudio.
-function applyWebAudioState(config: AudioConfig, deps: PolicyExecutorDeps): void {
+async function applyWebAudioState(config: AudioConfig, deps: PolicyExecutorDeps): Promise<AudioConfig> {
 	const { audioController } = deps;
-	const domVol = config.muted ? 0 : Math.min(1, config.volume / 100);
-
-	// rule: calculate effective gain for WebAudio to compensate for DOM attenuation
-	// ex: Vol 50% -> Dom 0.5 -> Effective 100% (Unity Gain). Output = 0.5 * 1.0 = 0.5
-	// ex: Vol 200% -> Dom 1.0 -> Effective 200% (2.0 Gain). Output = 1.0 * 2.0 = 2.0
-	const effectiveConfig = { ...config };
-	if (!config.muted && domVol > 0.001) {
-		effectiveConfig.volume = (config.volume / 100) / domVol * 100;
-	} else {
-		// if muted or near zero, gain doesn't matter as source is silent, but keep it safe
-		effectiveConfig.volume = config.volume;
+	const effectiveConfig = toWebAudioProcessingConfig(config);
+	const snapshot = await audioController.applyConfig(effectiveConfig);
+	if (snapshot.contextState !== 'running' || snapshot.sourceCount < 1) {
+		throw new Error('WebAudio graph did not return a running source-backed ACK');
 	}
-
-	setDomVolume(domVol, config.muted);
-	getSiteBridge().syncVolume(config.volume, config.muted);
-
-	audioController.scanAndAttach();
-	audioController.updateParams(effectiveConfig);
-
-	// eff: notify injector for WebAudio API hijacking (for sites creating their own contexts)
-	// note: we broadcast the REAL requested volume, not the effective one, so hijacked contexts know the target
-	window.postMessage({ type: 'SPECTRA_VOLUME_UPDATE', volume: config.volume / 100 }, '*');
+	if (audioGraphSignature(snapshot.normalizedActualConfig) !== snapshot.graphSignature) {
+		throw new Error('WebAudio graph signature does not match its normalized actual configuration');
+	}
+	return actualConfigFromGraphSnapshot(config, snapshot);
 }
 
+async function restoreWebAudioState(
+	config: AudioConfig,
+	deps: PolicyExecutorDeps,
+): Promise<AudioConfig | null> {
+	const registry = getActiveMediaRegistry();
+	const entries = registry?.list() ?? [];
+	const elements = entries.map(({ element }) => element);
+	const evidenceFor = (element: HTMLMediaElement) =>
+		typeof registry?.getEligibilityEvidence === 'function'
+			? registry.getEligibilityEvidence(element)
+			: undefined;
+	if (!assessMediaSourceCoverage(elements, evidenceFor).fullCoverage) return null;
+	if (!await deps.audioController.initialize(true)) return null;
+	if (!elements.every((element) => deps.audioController.ensureAttached(element, evidenceFor(element)))) {
+		return null;
+	}
+	if (!deps.audioController.hasCompleteCoverage(elements, evidenceFor)) return null;
+	return applyWebAudioState(config, deps);
+}
 
-// eff: basic DOM-based volume control used as a baseline or fallback
-// rule: numeric gain is capped at 100% as native HTMLMediaElement doesn't support boost
-function fallbackToDom(config: AudioConfig): void {
-	const domVol = config.muted ? 0 : Math.min(1, config.volume / 100);
-	enableVolumeLock(domVol, config.muted);
-	getSiteBridge().syncVolume(config.volume, config.muted);
+function actualConfigFromGraphSnapshot(
+	requested: AudioConfig,
+	snapshot: AudioGraphSnapshot,
+): AudioConfig {
+	const actual = snapshot.normalizedActualConfig;
+	const volumeBase = resolveAudioVolume(requested).volumeBase;
+	return {
+		...requested,
+		volumeBase,
+		boost: actual.boostGain,
+		volume: Math.round(volumeBase * actual.boostGain * 100) / 100,
+		bass: actual.bass,
+		eqValues: [...actual.eqValues],
+		compressor: actual.compressor,
+		mono: actual.mono,
+		pan: actual.pan,
+		delay: actual.delay,
+	};
 }

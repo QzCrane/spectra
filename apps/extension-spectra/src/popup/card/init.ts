@@ -1,13 +1,19 @@
 // goal: main entry point for initializing a tab control card, aggregating status probing, DOM setup, and event binding
 
-import { predictCapture } from '@nexus/audio-engine';
-import { getAudioConfig, type GlobalSettings } from '@nexus/kernel';
-import { Actions } from '@nexus/contracts';
-import type { I18NDict, ContentStatusResponse } from '../types';
-import { getDomain, sendToTab, sendToBackground, messenger } from '../utils/dom';
+import {
+	audioSessionMatchesControlDocument,
+	isActiveCaptureLifecycle,
+  type AudioSessionSnapshot,
+} from '@nexus/contracts';
+import { sendSpectraRequest, sendSpectraTabRequest } from '../../shared/ui-spectra-client';
 import { cardRenderCallbacks } from '../views/settings';
-import { getCardUIElements } from './ui-elements';
-import { cleanConfig, type CardInternalState, type InitCardParams } from './types';
+import { VISUALIZER_STATE_CHANGED_EVENT } from '../visualizer/events';
+import {
+	initialControlConfig,
+  mergeAudioConfig,
+  type CardInternalState,
+  type InitCardParams,
+} from './types';
 import { createGetCapturing, createUpdateFn } from './state';
 import { createRenderFn } from './render';
 import { bindCardEvents } from './events';
@@ -15,43 +21,128 @@ import { setupCardMessaging } from './messaging';
 import { prepareCardDom } from './dom-init';
 import { bindCardIconClick, registerCard } from '../side-panel';
 
+interface PopupObservationLease {
+  documentId: string;
+  runtimeRevision: string;
+  capability: string;
+}
+
+const observationLeases = new Map<number, PopupObservationLease>();
+let popupClosing = false;
+
+async function acquirePopupObservation(tabId: number): Promise<void> {
+  if (observationLeases.has(tabId) || popupClosing) return;
+  const capability = `popup:${crypto.randomUUID()}`;
+  const response = await sendSpectraRequest('spectra.content.runtime.ensure', {
+    tabId,
+    reason: 'observation',
+    capability,
+  }).catch(() => null);
+  if (!response?.ok) return;
+  const lease = {
+    documentId: response.data.documentId,
+    runtimeRevision: response.data.runtimeRevision,
+    capability,
+  };
+  if (popupClosing) {
+    void sendSpectraRequest('spectra.content.runtime.release', {
+      runtimeRevision: lease.runtimeRevision,
+      tabId,
+      documentId: lease.documentId,
+      reason: 'observation',
+      capability: lease.capability,
+    }).catch(() => undefined);
+    return;
+  }
+  observationLeases.set(tabId, lease);
+}
+
+function releasePopupObservations(): void {
+  popupClosing = true;
+  for (const [tabId, lease] of observationLeases) {
+    void sendSpectraRequest('spectra.content.runtime.release', {
+      runtimeRevision: lease.runtimeRevision,
+      tabId,
+      documentId: lease.documentId,
+      reason: 'observation',
+      capability: lease.capability,
+    }).catch(() => undefined);
+  }
+  observationLeases.clear();
+}
+
+window.addEventListener('pagehide', releasePopupObservations, { once: true });
+
 // post: returns true if card was successfully initialized and appended to the container; false if the tab is non-responsive or should be skipped
 export async function initCard(params: InitCardParams): Promise<boolean> {
-  const { container, template, tab, dict, registryEntries, getGlobalSettings, createEqCurveDrawer } = params;
+  const { container, template, tab, dict, getGlobalSettings, createEqCurveDrawer } = params;
 
   if (!tab.id) return false;
   const tabId = tab.id;
 
-  // eff: probe content script; if unreachable, attempt on-demand injection then retry once
-  let status = await sendToTab<ContentStatusResponse>(tabId, 'AUDIO_GET_STATUS', {});
-  if (!status) {
+  // rule: status reads are side-effect free; an unreachable document is omitted
+  // until navigation or an explicit user operation installs the content runtime.
+  const getRuntimeStatus = async () => {
     try {
-      const injected = await messenger.send('INJECT_CONTENT_SCRIPT', { tabId });
-      if (injected?.success) {
-        await new Promise(r => setTimeout(r, 800));
-        status = await sendToTab<ContentStatusResponse>(tabId, 'AUDIO_GET_STATUS', {});
-      }
-    } catch { /* background unreachable */ }
-    if (!status) return false;
-  }
+      const result = await sendSpectraTabRequest(tabId, 'spectra.audio.runtime.get', {});
+      return result.ok ? result.data : null;
+    } catch {
+      return null;
+    }
+  };
 
-  const isCaptureActive = await sendToBackground<boolean>('CAPTURE_GET_STATE', { tabId });
+  const [status, controlSnapshot] = await Promise.all([
+    getRuntimeStatus(),
+    sendSpectraRequest(
+      'spectra.control.snapshot.get',
+      { tabId },
+      { tabId },
+    ).then((response) => response.ok ? response.data : null).catch(() => null),
+  ]);
+
+  let acknowledgedSession: AudioSessionSnapshot | null = null;
+  try {
+    const response = await sendSpectraRequest(
+      'spectra.audio.session.get',
+      { tabId },
+      { tabId },
+    );
+    if (response.ok) acknowledgedSession = response.data;
+  } catch { /* session reads stay side-effect free while the worker restarts */ }
+
+	// Processor color is valid only when lifecycle and field-level actual state
+	// identify the same document. A direct runtime read may fill this role only
+	// for an acknowledged active Capture returned by the currently routed tab.
+	if (!audioSessionMatchesControlDocument(acknowledgedSession, controlSnapshot)) acknowledgedSession = null;
+	// An extension-page Capture request can commit before its document identity
+	// is projected into ControlSnapshot. The direct content runtime read is still
+	// routed to this exact tab and can safely prevent a false-blue Capture card;
+	// all non-Capture lifecycle colors continue to require the matched session.
+	const runtimeCaptureLifecycle = status?.actualMode === 'capture' && status.phase === 'active'
+		? status
+		: null;
+	const lifecycle = acknowledgedSession ?? runtimeCaptureLifecycle;
+	const isCaptureActive = isActiveCaptureLifecycle({
+		actualMode: lifecycle?.actualMode,
+		phase: lifecycle?.phase ?? 'idle',
+	});
 
   let isRemoteActive = false;
   try {
-    const remoteStatus = await chrome.runtime.sendMessage({
-      action: Actions.REMOTE_GET_SESSION,
-      tabId,
-    });
-    isRemoteActive = remoteStatus?.connected === true;
+    const remoteStatus = await sendSpectraRequest(
+      'spectra.remote.session.get',
+      { tabId },
+      { tabId },
+    );
+    isRemoteActive = remoteStatus.ok && remoteStatus.data.connected;
   } catch { /* silent fail */ }
 
-  const hasActiveMedia = tab.audible || isCaptureActive || (status?.isPlaying);
+  const hasActiveMedia = tab.audible || isCaptureActive || status?.isPlaying === true;
 
   // rule: retention logic ensures a card stays visible for a grace period after audio stops, allowing the user to resume control
-  if (!hasActiveMedia && !isRemoteActive) {
+  if (params.isBackground && !hasActiveMedia && !isRemoteActive) {
     const pauseRetentionSeconds = getGlobalSettings().pauseRetentionSeconds ?? 60;
-    if (pauseRetentionSeconds > 0 && status.pausedAt) {
+    if (pauseRetentionSeconds > 0 && status?.pausedAt) {
       const pausedSeconds = (Date.now() - status.pausedAt) / 1000;
       if (pausedSeconds > pauseRetentionSeconds) {
         return false;
@@ -59,34 +150,33 @@ export async function initCard(params: InitCardParams): Promise<boolean> {
     }
   }
 
-  const domain = getDomain(tab.url || '');
+  // Route caches never predict card color. Only the acknowledged active runtime
+  // may project the legacy compatibility flag used by the message adapter.
+  const isRestrictedSite = isCaptureActive;
 
-  const isRestrictedSite = registryEntries.some(e =>
-    e.restricted !== false && domain.includes(e.domain)
-  );
-
-  // note: priority is Content Script runtime state > Saved Profile; cleanConfig ensures schema compliance
-  // rule: status.config reflects current session state (may differ from saved preset)
-  const runtimeConfig = status?.config;
-  const savedConfig = runtimeConfig ?? await getAudioConfig(domain);
-  const config = cleanConfig(savedConfig);
-
-  const settings = getGlobalSettings();
-  const predictedCapture = predictCapture({
-    config,
-    isRestricted: isRestrictedSite,
-    visualizerEnabled: settings.visualizerEnabled,
-  });
-
-  const effectiveCaptureState = isCaptureActive || predictedCapture;
+	// ControlSnapshot owns every field-level actual. Runtime/session status below
+	// contributes lifecycle only and may never overwrite or backfill these fields.
+	const config = initialControlConfig(controlSnapshot);
 
   const state: CardInternalState = {
     config,
-    isCaptureActive: effectiveCaptureState,
-    userInteracted: status?.userInteracted ?? false,
+    stableConfig: mergeAudioConfig(config, { eqValues: [...config.eqValues] }),
+    controlSnapshot,
+    isCaptureActive,
+    userInteracted: status?.userInteracted ?? (controlSnapshot?.revision ?? 0) > 0,
     isRestrictedSite,
-    actualMode: status?.mode ?? null,
+    actualMode: lifecycle?.actualMode ?? 'bypass',
+    desiredMode: lifecycle?.desiredMode ?? 'bypass',
+    phase: lifecycle?.phase ?? 'idle',
+    audioDocumentId: lifecycle ? controlSnapshot?.documentId ?? null : null,
+    audioOrigin: lifecycle ? controlSnapshot?.origin ?? null : null,
+    audioGeneration: lifecycle?.generation ?? -1,
+	    audioConfigRevision: acknowledgedSession?.configRevision ?? 0,
+    controlGeneration: controlSnapshot?.generation ?? 0,
+    controlRevision: controlSnapshot?.revision ?? 0,
+    lastError: acknowledgedSession?.lastError ?? status?.lastError ?? null,
     isDragging: false,
+    draggingField: null,
   };
 
   const { ui, cardEl } = prepareCardDom({ template, container, tab, dict });
@@ -103,14 +193,17 @@ export async function initCard(params: InitCardParams): Promise<boolean> {
   const drawEqCurve = (color: string) => eqDrawer?.draw(color);
   const updateMetrics = eqDrawer?.updateMetrics ?? (() => { });
 
-  const render = createRenderFn({
+  const renderCard = createRenderFn({
     ui,
     state,
-    getCapturing,
     drawEqCurve,
     getVizEnabled: () => getGlobalSettings().visualizerEnabled !== false,
     getGlobalSettings,
   });
+  const render = () => {
+    renderCard();
+    document.dispatchEvent(new Event(VISUALIZER_STATE_CHANGED_EVENT));
+  };
 
   const update = createUpdateFn(state, tabId, getCapturing, render, getGlobalSettings);
 
@@ -130,7 +223,7 @@ export async function initCard(params: InitCardParams): Promise<boolean> {
   });
 
   if (ui.icon) {
-    bindCardIconClick(ui.icon, tabId, tab.title || '', tab.favIconUrl || '');
+    bindCardIconClick(ui.icon, tabId, tab.title || '', ui.icon.src);
   }
 
   // note: register the update handle globally so settings can trigger re-renders from the Settings view
@@ -145,6 +238,12 @@ export async function initCard(params: InitCardParams): Promise<boolean> {
 
   render();
 
+  // Snapshot reads stay side-effect free. Once the foreground card is visible,
+  // a document-scoped observation lease installs only event listeners/registry
+  // state so page-side changes can flow back to Popup. It never admits MAIN,
+  // AudioContext or offscreen processing by itself.
+  if (!params.isBackground) void acquirePopupObservation(tabId);
+
   // goal: dynamically import the visualizer loop to optimize initial popup load time
   if (ui.canvas) {
     const { createVizLoop } = await import('../visualizer/loop');
@@ -153,9 +252,9 @@ export async function initCard(params: InitCardParams): Promise<boolean> {
       tabId,
       getConfig: () => state.config,
       getCapturing,
+      isProcessorActive: () => state.phase === 'active'
+        && (state.actualMode === 'webaudio' || state.actualMode === 'capture'),
       getGlobalSettings,
-      initialPredictedCapture: state.isRestrictedSite && getGlobalSettings().visualizerEnabled !== false,
-      isCaptureActive: state.isCaptureActive,
     });
     startViz();
   }

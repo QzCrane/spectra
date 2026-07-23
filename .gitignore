@@ -3,6 +3,7 @@ node_modules/
 
 # Build outputs
 dist/
+release/
 *.tsbuildinfo
 
 # IDE
@@ -28,3 +29,9 @@ pnpm-debug.log*
 
 # Playwright test data
 **/test/.playwright-user-data/
+
+# Coverage
+coverage/
+
+# Cache
+.cache/

@@ -1,34 +1,31 @@
 {
 	"name": "@nexus/extension-spectra",
-	"version": "1.3.4",
+	"version": "1.4.0",
 	"private": true,
 	"description": "SPECTRA - The Audio & Video Enhancement Extension",
 	"type": "module",
 	"scripts": {
-		"dev": "bun build.mjs --watch",
-		"build": "bun build.mjs --dev",
-		"build:prod": "bun build.mjs",
-		"build:copy": "powershell -Command \"Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue; Copy-Item -Recurse public dist\"",
-		"test:e2e": "bun run build ; bun test test/smoke.spec.ts",
-		"test:volume": "bun run build ; bun test test/verify-volume.spec.ts",
-		"test:unit": "bun test test/registry.spec.ts",
-		"test": "bun test test/registry.spec.ts",
-		"typecheck": "bun tsc --noEmit"
+		"dev": "bun build.mjs --watch --dev",
+		"build": "bun build.mjs",
+		"build:prod": "bun run build",
+		"build:dev": "bun build.mjs --dev",
+		"build:sourcemap": "bun build.mjs --sourcemap",
+		"build:analyze": "bun build.mjs --analyze",
+		"integrity": "bun scripts/check-production-artifacts.mjs",
+		"typecheck": "bun tsc --noEmit",
+		"lint": "biome check src public build.mjs scripts --max-diagnostics=100"
 	},
 	"dependencies": {
 		"@nexus/audio-engine": "workspace:*",
 		"@nexus/kernel": "workspace:*",
 		"peerjs": "^1.5.5",
-		"qrcode": "^1.5.4"
+		"uqr": "^0.1.3"
 	},
 	"devDependencies": {
-		"@types/puppeteer": "^7.0.4",
-		"@types/qrcode": "^1.5.6",
 		"chrome-types": "^0.1.327",
 		"esbuild": "^0.27.2",
-		"puppeteer": "^24.34.0",
 		"sharp": "^0.34.5",
-		"tsx": "^4.21.0",
+		"terser": "5.43.1",
 		"typescript": "^5.3.0"
 	}
 }

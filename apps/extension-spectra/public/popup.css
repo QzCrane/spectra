@@ -7,11 +7,18 @@
   --primary: #2563eb;
   --active: #10b981;
   --danger: #ef4444;
+  --success: #16a34a;
+  --warning: #d97706;
+  --info: #0284c7;
+  --g3: #475569;
+  --border: #e2e8f0;
+  --card-bg: #ffffff;
   --radius: 14px;
   --shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.06);
   --bg: #f1f5f9;
   --card-border: #ffffff;
   --switch-bg: #cbd5e1;
+  --slider-accent: var(--primary);
 }
 
 /* Dark mode variables */
@@ -24,6 +31,12 @@
   --primary: #60a5fa;
   --active: #34d399;
   --danger: #f87171;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --info: #38bdf8;
+  --g3: #cbd5e1;
+  --border: #475569;
+  --card-bg: #1e293b;
   --shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.3);
   --bg: #0f172a;
   --card-border: #334155;
@@ -85,13 +98,15 @@ body {
   background-color: rgba(0, 0, 0, 0.2);
 }
 
-.hidden {
-  display: none !important;
+:where(button, input, select, [role="button"]):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .view-container {
   position: relative;
   width: 100%;
+  min-height: 600px; /* ensure settings page has enough height */
 }
 
 /* Main UI: fill fixed-width parent container */
@@ -117,8 +132,8 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0; /* fill container */
+  width: 100%;
+  height: 100%; /* explicit height to ensure content is visible */
   padding: 12px;
   box-sizing: border-box;
   background: var(--bg);
@@ -456,6 +471,30 @@ body {
   border-color: var(--success);
 }
 
+/* rule: shared transient feedback state for both save buttons (.btn-save and
+   .btn-save-global). Replaces the icon with localized text ("Saved"/"Failed")
+   and tints the border + text. Both buttons use the same mechanism so the
+   feedback style is consistent — previously .btn-save showed hardcoded
+   Chinese "保存成功"/"保存失败" while .btn-save-global showed English "OK",
+   with no failure feedback at all. */
+.btn-text.feedback {
+  width: auto;
+  min-width: 28px;
+  padding: 0 8px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn-text.feedback.saved {
+  color: var(--success);
+  background: var(--w);
+  border-color: var(--success);
+}
+.btn-text.feedback.failed {
+  color: var(--danger);
+  background: var(--w);
+  border-color: var(--danger);
+}
+
 .switch-main {
   position: relative;
   width: 44px;
@@ -466,7 +505,12 @@ body {
 }
 
 .switch-main input {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .slider-round {
@@ -496,6 +540,11 @@ input:checked + .slider-round {
 
 input:checked + .slider-round:before {
   transform: translateX(20px);
+}
+
+.switch-main input:focus-visible + .slider-round {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* 3. Sleep mask: now covered by card-top header */
@@ -660,7 +709,6 @@ input:checked + .slider-round:before {
   width: 0%;
   top: 7px;
   pointer-events: none;
-  transition: background 0.2s;
   z-index: 5;
 }
 
@@ -683,10 +731,6 @@ input:checked + .slider-round:before {
   border-color: var(--g2);
 }
 
-.glass-card.muted .vol-number {
-  color: var(--g2);
-}
-
 .vol-number {
   font-weight: 800;
   font-size: 14px;
@@ -695,6 +739,10 @@ input:checked + .slider-round:before {
   text-align: right;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+}
+
+.glass-card.muted .vol-number {
+  color: var(--g2);
 }
 
 .chips-row {
@@ -896,35 +944,6 @@ input:checked + .slider-round:before {
 }
 
 /* ========== Registry UI ========== */
-.registry-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 12px;
-}
-
-.registry-tab {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid var(--g1);
-  background: var(--g0);
-  border-radius: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--g2);
-  cursor: pointer;
-  transition: 0.2s;
-}
-
-.registry-tab:hover {
-  background: var(--w);
-}
-
-.registry-tab.active {
-  background: var(--primary);
-  color: #fff;
-  border-color: var(--primary);
-}
-
 .registry-search {
   margin-bottom: 8px;
 }
@@ -950,9 +969,11 @@ input:checked + .slider-round:before {
   max-height: 200px;
   overflow-y: auto;
   margin-bottom: 12px;
+  padding: 0;
   border: 1px solid var(--g1);
   border-radius: 8px;
   background: var(--g0);
+  list-style: none;
 }
 
 .registry-item {
@@ -970,14 +991,51 @@ input:checked + .slider-round:before {
 }
 
 .registry-item-domain {
-  flex: 1;
   color: var(--text);
   word-break: break-all;
 }
 
-.registry-item-source {
-  font-size: 9px;
+.registry-item-identity {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.registry-item-fingerprint {
+  overflow: hidden;
   color: var(--g2);
+  font-size: 9px;
+  text-overflow: ellipsis;
+}
+
+.registry-item-route {
+  max-width: 112px;
+  margin-left: 8px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registry-item-route-capture {
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+  color: var(--warning);
+}
+
+.registry-item-route-direct {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
+
+.registry-item-source {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
   margin-left: 8px;
   padding: 2px 6px;
   background: var(--w);
@@ -1027,6 +1085,16 @@ input:checked + .slider-round:before {
 .registry-add-input:focus {
   border-color: var(--primary);
   background: var(--w);
+}
+
+.registry-route-select {
+  max-width: 112px;
+  padding: 8px;
+  border: 1px solid var(--g1);
+  background: var(--g0);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 10px;
 }
 
 .btn-small {
@@ -1310,6 +1378,30 @@ input:checked + .slider-round:before {
   letter-spacing: 0.3px;
 }
 
+/* Radio group */
+.sp-radio-group {
+  display: flex;
+  gap: 8px;
+}
+
+.sp-radio {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.sp-radio input {
+  width: 10px;
+  height: 10px;
+  accent-color: var(--primary);
+}
+
+.sp-radio span {
+  font-size: 9px;
+  color: var(--text);
+}
+
 /* Chips row */
 .sp-chips-row {
   display: flex;
@@ -1324,7 +1416,19 @@ input:checked + .slider-round:before {
 }
 
 .sp-chip input {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sleep-resume-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.7;
 }
 
 .sp-chip span {
@@ -1338,6 +1442,11 @@ input:checked + .slider-round:before {
   border: 1px solid var(--g1);
   border-radius: 4px;
   transition: 0.15s;
+}
+
+.sp-chip input:focus-visible + span {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
 .sp-chip input:checked + span {
@@ -1613,30 +1722,6 @@ input:checked + .slider-round:before {
   width: 40px;
 }
 
-/* Radio group */
-.sp-radio-group {
-  display: flex;
-  gap: 8px;
-}
-
-.sp-radio {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  cursor: pointer;
-}
-
-.sp-radio input {
-  width: 10px;
-  height: 10px;
-  accent-color: var(--primary);
-}
-
-.sp-radio span {
-  font-size: 9px;
-  color: var(--text);
-}
-
 /* Footer buttons */
 .sp-btn-action {
   flex: 1;
@@ -1736,13 +1821,12 @@ input:checked + .slider-round:before {
 }
 
 .preset-section-header {
-  padding: 4px 8px;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--g2);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-top: 6px;
+  padding: 7px 8px 5px;
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--text);
+  letter-spacing: 0.2px;
+  margin-top: 10px;
 }
 
 .preset-section-header:first-child {
@@ -1969,6 +2053,10 @@ input:checked + .slider-round:before {
   transition: opacity 0.3s;
 }
 
+.popup-toast-error {
+  background: var(--danger);
+}
+
 @keyframes slideUp {
   from {
     transform: translateX(-50%) translateY(20px);
@@ -2061,10 +2149,10 @@ input:checked + .slider-round:before {
   min-width: 300px;
   max-width: 90vw;
   margin: 20px;
-  animation: slideUp 0.25s ease;
+  animation: remoteSlideUp 0.25s ease;
 }
 
-@keyframes slideUp {
+@keyframes remoteSlideUp {
   from {
     transform: translateY(20px);
     opacity: 0;
@@ -2245,4 +2333,9 @@ input:checked + .slider-round:before {
 .btn-icon.remote-connected:hover {
   background: linear-gradient(135deg, #059669 0%, #047857 100%);
   opacity: 1;
+}
+
+body .hidden,
+body [hidden] {
+  display: none;
 }

@@ -3,17 +3,37 @@
 	"version": "0.0.1",
 	"description": "NEXUS pure contracts layer - contains only interfaces and type definitions, no business logic",
 	"type": "module",
+	"sideEffects": false,
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
-		}
+		},
+		"./bootstrap": {
+			"types": "./dist/spectra.bootstrap.d.ts",
+			"import": "./dist/spectra.bootstrap.js"
+		},
+		"./ui-runtime": {
+			"types": "./dist/spectra.ui-runtime.d.ts",
+			"import": "./dist/spectra.ui-runtime.js"
+		},
+		"./ui-settings-runtime": {
+			"types": "./dist/spectra.ui-settings-runtime.d.ts",
+			"import": "./dist/spectra.ui-settings-runtime.js"
+		},
+		"./content-runtime": {
+			"types": "./dist/spectra.content-runtime.d.ts",
+			"import": "./dist/spectra.content-runtime.js"
+		},
+		"./*": null
 	},
 	"scripts": {
 		"build": "bun tsc",
-		"dev": "bun tsc --watch"
+		"dev": "bun tsc --watch",
+		"lint": "biome check src --max-diagnostics=100",
+		"typecheck": "bun tsc --noEmit --tsBuildInfoFile typecheck.tsbuildinfo"
 	},
 	"devDependencies": {
 		"typescript": "^5.3.0",

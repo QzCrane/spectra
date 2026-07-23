@@ -54,16 +54,20 @@ function getControls(): SidePanelControls {
 export function bindSidePanelControls(
 	config: AudioConfig,
 	updateFn: (changes: Partial<AudioConfig>) => void,
-	tabId: number
+	_tabId: number
 ): void {
 	currentConfig = config;
 	const c = getControls();
+	const updateAndTrack = (changes: Partial<AudioConfig>) => {
+		currentConfig = { ...(currentConfig ?? config), ...changes };
+		updateFn(changes);
+	};
 
-	bindAudioChips(c, config, updateFn);
-	bindSpeedControls(c, updateFn, config.speed ?? 1);
-	bindPanControl(c, config, updateFn);
-	bindDelayControl(c, config, updateFn);
-	bindEq(c, config, updateFn);
+	bindAudioChips(c, config, updateAndTrack);
+	bindSpeedControls(c, updateAndTrack, config.speed ?? 1);
+	bindPanControl(c, config, updateAndTrack);
+	bindDelayControl(c, config, updateAndTrack);
+	bindEq(c, config, updateAndTrack);
 }
 
 function bindAudioChips(c: SidePanelControls, config: AudioConfig, updateFn: (changes: Partial<AudioConfig>) => void): void {
@@ -98,7 +102,7 @@ function bindDelayControl(c: SidePanelControls, config: AudioConfig, updateFn: (
 			if (c.delayVal) c.delayVal.textContent = `${delay}ms`;
 			updateFn({ delay });
 		};
-		addWheelSupport(c.delaySlider, 10, -500, 500, (v) => {
+		addWheelSupport(c.delaySlider, 10, 0, 500, (v) => {
 			if (c.delayVal) c.delayVal.textContent = `${v}ms`;
 			updateFn({ delay: v });
 		});
@@ -112,6 +116,8 @@ function bindEq(c: SidePanelControls, config: AudioConfig, updateFn: (changes: P
 
 	c.eqInputs.forEach((inp, i) => {
 		const v = config.eqValues?.[i] ?? 0;
+		const frequency = inp.parentElement?.querySelector('.sp-eq-hz')?.textContent?.trim();
+		inp.setAttribute('aria-label', `${frequency || `Band ${i + 1}`} equalizer gain`);
 		inp.value = String(v);
 		updateValDisplay(c.eqVals[i], v);
 
@@ -128,7 +134,7 @@ function bindEq(c: SidePanelControls, config: AudioConfig, updateFn: (changes: P
 			updateFn({ eqValues: arr });
 		};
 
-		inp.parentElement?.addEventListener('wheel', (e) => {
+		if (inp.parentElement instanceof HTMLElement) inp.parentElement.onwheel = (e) => {
 			e.preventDefault();
 			let v = parseFloat(inp.value);
 			v = e.deltaY < 0 ? Math.min(v + 0.5, 12) : Math.max(v - 0.5, -12);
@@ -139,7 +145,7 @@ function bindEq(c: SidePanelControls, config: AudioConfig, updateFn: (changes: P
 			const arr = [...(currentConfig?.eqValues ?? Array(10).fill(0))];
 			arr[i] = v;
 			updateFn({ eqValues: arr });
-		}, { passive: false });
+		};
 	});
 
 	drawSidePanelEqCurve(c.eqCanvas, c.eqInputs);

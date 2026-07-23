@@ -17,12 +17,22 @@ export function drawViz(
 
   ctx.clearRect(0, 0, w, h);
 
-  // note: gracefully exits if no data is provided or the source is muted (visual silence)
-  if (!data || isMuted) return;
-
   const barW = UI_SIZES.VIZ_BAR_WIDTH;
   const gap = UI_SIZES.VIZ_BAR_GAP;
   const count = Math.floor(w / (barW + gap));
+
+  // Keep the visualizer island visibly mounted while the processor is warming
+  // up or silent. These low idle ticks are presentation only; active frames
+  // replace them with actual sampled amplitudes below.
+  if (!data || isMuted) {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.28)';
+    for (let i = 0; i < count; i++) {
+      const idleHeight = i % 4 === 0 ? 3 : 2;
+      ctx.fillRect(i * (barW + gap), h - idleHeight, barW, idleHeight);
+    }
+    return;
+  }
+
   const step = Math.floor(data.length / count) || 1;
 
   // rule: use distinct colors to visually indicate whether audio is captured (high fidelity) or native (low fidelity)

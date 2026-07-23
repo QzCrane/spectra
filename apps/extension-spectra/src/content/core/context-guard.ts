@@ -1,18 +1,17 @@
 // goal: prevents "Extension context invalidated" runtime errors by validating the environment before browser API calls
 
 import { logger } from '../../shared/logger';
+import {
+	isExtensionContextInvalidatedError,
+	isExtensionContextValid,
+	runWithValidExtensionContext,
+} from './extension-context';
+
+export { isExtensionContextInvalidatedError, isExtensionContextValid } from './extension-context';
 
 const log = logger.content;
 
 // post: returns true if the extension runtime is still active; false if reloaded or updated
-export function isExtensionContextValid(): boolean {
-	try {
-		return !!chrome.runtime?.id;
-	} catch {
-		return false;
-	}
-}
-
 // eff: executes a message-sending function only if the context is valid, suppressing invalidation errors
 // post: returns the actual result or a fallback value if the context is lost
 export async function safeSend<T>(
@@ -24,10 +23,10 @@ export async function safeSend<T>(
 		return fallback;
 	}
 	try {
-		return await sendFn();
+		return (await runWithValidExtensionContext(sendFn)) ?? fallback;
 	} catch (e) {
 		// rule: specifically intercept known invalidation patterns to prevent unhandled promise rejections
-		if (String(e).includes('Extension context invalidated') ||
+		if (isExtensionContextInvalidatedError(e) ||
 			String(e).includes('message port closed')) {
 			log.debug('Extension context invalidated during send.');
 			return fallback;

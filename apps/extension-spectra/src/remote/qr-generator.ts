@@ -1,24 +1,16 @@
-/**
- * SPECTRA Remote - QR Generator
- */
+// goal: render the authenticated pairing URL with a small, zero-dependency SVG QR encoder
 
-import QRCode from 'qrcode';
-import { REMOTE_HOST, getRemoteUrl } from './constants.js';
+import { renderSVG } from 'uqr';
+import { getRemoteUrl } from './constants.js';
+import type { RemotePairing } from './protocol';
 
-export async function generateRemoteQR(sessionId: string, baseUrl?: string): Promise<string> {
-	const url = baseUrl ? `${baseUrl}?s=${sessionId}` : getRemoteUrl(sessionId);
-
-	return QRCode.toDataURL(url, {
-		width: 200,
-		margin: 2,
-		color: {
-			dark: '#1a1a2e',
-			light: '#ffffff',
-		},
+export async function generateRemoteQR(pairing: RemotePairing, baseUrl?: string): Promise<string> {
+	const url = getRemoteUrl(pairing, baseUrl);
+	const svg = renderSVG(url, {
+		ecc: 'M',
+		border: 2,
+		blackColor: '#1a1a2e',
+		whiteColor: '#ffffff',
 	});
-}
-
-// For debugging
-export async function generateRemoteQRText(sessionId: string): Promise<string> {
-	return QRCode.toString(getRemoteUrl(sessionId), { type: 'terminal', small: true });
+	return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }

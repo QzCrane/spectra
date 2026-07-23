@@ -6,3 +6,4 @@ export { registerCaptureHandlers, handleCaptureToggle } from './capture';
 export { registerBadgeHandlers } from './badge';
 export { registerRegistryHandlers } from './registry';
 export { registerTabStateHandlers } from './tab-state';
+export { registerScreenshotHandler } from './screenshot';

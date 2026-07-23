@@ -3,10 +3,7 @@
 import { DEFAULT_AUDIO_CONFIG } from '@nexus/kernel';
 import { getCurrentPanelTabId, getCardRegistration } from './index';
 import { syncSidePanelState } from './controls';
-import { safeStorageGet, safeStorageSet } from '../../shared/safe-storage';
-
-// note: effect presets are stored separately from general audio config to allow users to apply complex EQ profiles without overriding master volume
-const FX_PRESET_PREFIX = 'preset_fx_';
+import { patchSettings } from '../../shared/settings-client';
 
 export function bindFooterActions(): void {
 	const btnReset = document.querySelector('.sp-btn-reset') as HTMLButtonElement | null;
@@ -55,26 +52,19 @@ async function handleSave(): Promise<void> {
 		delay: config.delay,
 	};
 
-	const key = `${FX_PRESET_PREFIX}${domain}`;
-	await safeStorageSet({ [key]: fxPreset });
-}
-
-// post: retrieves a stored effect profile for the specified domain, returns null if no custom preset exists
-export async function loadFxPreset(domain: string): Promise<{
-	eqValues?: number[];
-	pan?: number;
-	delay?: number;
-} | null> {
-	const key = `${FX_PRESET_PREFIX}${domain}`;
-	const result = await safeStorageGet<{ [k: string]: { eqValues?: number[]; pan?: number; delay?: number } }>([key], {});
-	return result[key] || null;
+	await patchSettings({
+		scope: 'audio-site',
+		domain,
+		value: fxPreset,
+		mode: 'merge',
+	});
 }
 
 async function getDomainForTab(tabId: number): Promise<string | null> {
 	try {
 		const tab = await chrome.tabs.get(tabId);
 		if (!tab?.url) return null;
-		return new URL(tab.url).hostname.replace('www.', '');
+		return new URL(tab.url).hostname;
 	} catch {
 		return null;
 	}

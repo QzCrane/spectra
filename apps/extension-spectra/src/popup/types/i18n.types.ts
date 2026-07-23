@@ -60,6 +60,7 @@ export interface I18NDict {
 
 	// note: media playback and focus management tooltips
 	btnPause: string;
+	btnMute: string;
 	btnPip: string;
 	btnHotkeyTarget: string;
 	btnGotoTab: string;
@@ -102,7 +103,24 @@ export interface I18NDict {
 	presetAppliedToast: (name: string) => string;
 	btnClose: string;
 	btnSaveAsGlobal: string;
-	presetSaveGlobalPrompt: string;
+	// note: zero-interaction global preset save. The name is auto-generated
+	// from this base label plus a compact timestamp; the user is never
+	// prompted. The previous presetSaveGlobalPrompt was removed because it
+	// pre-filled the current domain and read as "name this after the domain".
+	presetDefaultName: string;
+	// note: effect summary tokens shown under each preset entry. Bass/Mono
+	// reuse the card labels; Comp/Pan/Default have their own short forms so
+	// the summary stays compact and independent of the card label wording.
+	presetEffectComp: string;
+	presetEffectPan: string;
+	presetEffectPanRight: string;
+	presetEffectPanLeft: string;
+	presetEffectDefault: string;
+	// note: transient save-button feedback shown inline on the button after a
+	// site-config or global-preset save attempt. Shared by both save buttons so
+	// the feedback style is consistent across them.
+	saveSuccess: string;
+	saveFailed: string;
 
 	// note: remote synchronization and mobile connection UI
 	btnRemoteTooltip: string;
@@ -119,6 +137,16 @@ export interface I18NDict {
 	// note: empty states for tab registry filtering
 	registryEmptyRestricted: string;
 	registryEmptySafe: string;
+	// note: registry list item source labels and the static aria-labels/titles
+	// on the registry add-domain row. Previously hardcoded English strings.
+	registrySourceAuto: string;
+	registrySourceUser: string;
+	registryFilterAria: string;
+	registryNewDomainAria: string;
+	registryRouteAria: string;
+	registryAddDomainTitle: string;
+	// note: preset search aria-label for the static presets-group input.
+	presetSearchAria: string;
 
 	// note: CORS injection and domain correction feedback
 	corsAddedSafe: (domain: string) => string;

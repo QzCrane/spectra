@@ -23,7 +23,7 @@ interface EngineState {
 
 const engine: EngineState = {
 	que: [], pending: null, target: null, direction: { x: 0, y: 0 },
-	animationTime: 300, easing: (t) => 1 - Math.pow(1 - t, 4)
+	animationTime: 300, easing: (t) => 1 - (1 - t) ** 4
 };
 
 function directionCheck(x: number, y: number): void {

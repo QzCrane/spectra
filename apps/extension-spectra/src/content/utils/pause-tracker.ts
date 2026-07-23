@@ -3,9 +3,6 @@
 // pausedAt: epoch timestamp (ms) when all media stopped playing; null if any media is active
 let pausedAt: number | null = null;
 
-// pauseTracked: WeakSet to avoid redundant event listener attachment while preventing memory leaks
-const pauseTracked = new WeakSet<HTMLMediaElement>();
-
 export function getPausedAt(): number | null {
 	return pausedAt;
 }
@@ -16,28 +13,7 @@ export function updatePausedAt(hasPlaying: boolean, hasElements: boolean): void 
 		pausedAt = null;
 	} else if (pausedAt === null && hasElements) {
 		pausedAt = Date.now();
-	}
-}
-
-export function needsTracking(media: HTMLMediaElement): boolean {
-	return !pauseTracked.has(media);
-}
-
-export function markTracked(media: HTMLMediaElement): void {
-	pauseTracked.add(media);
-}
-
-// eff: attaches 'pause' and 'play' listeners to a media element to maintain the global silence duration state
-export function setupPauseTracking(media: HTMLMediaElement, isAnyPlayingFn: () => boolean): void {
-	media.addEventListener('pause', () => {
-		if (!isAnyPlayingFn()) {
-			pausedAt = Date.now();
-		}
-	});
-
-	media.addEventListener('play', () => {
+	} else if (!hasElements) {
 		pausedAt = null;
-	});
-
-	markTracked(media);
+	}
 }

@@ -2,18 +2,17 @@
 
 import type { GlobalSettings } from '@nexus/kernel';
 import type { ThemeMode, DomainEntry } from '@nexus/contracts';
-import { Actions } from '@nexus/contracts';
 import type { I18NDict, RenderCallback } from '../types';
 import { getSettingsUIElements, $ } from '../utils/dom';
 import { applyTheme, THEME_ICONS, getNextThemeMode } from '../utils/theme';
-import { migrateRegistry } from '../utils/registry-helpers';
-import { TIMING } from '../constants';
 import { applyLang, updateCardsI18n } from './i18n-apply';
-import { safeStorageGet, safeStorageSet } from '../../shared/safe-storage';
+import { getSettingsSnapshot, patchSettings } from '../../shared/settings-client';
+import { getRegistrySnapshot } from '../../shared/registry-client';
 import { DEFAULT_GLOBAL_SETTINGS } from '@nexus/kernel';
 import { initRegistryUI, updateRegistryI18n } from './registry-ui';
 import { initPresetsUI, updatePresetsI18n } from './presets-ui';
 import { updateRemoteI18n } from '../../remote';
+import { loadLocaleCatalog } from '../../shared/i18n/catalog';
 
 export interface SettingsState {
   gSettings: GlobalSettings;
@@ -28,38 +27,29 @@ export const cardRenderCallbacks: RenderCallback[] = [];
 export async function initSettings(): Promise<SettingsState> {
   const ui = getSettingsUIElements();
 
-  const result = await safeStorageGet<{
-    globalSettings?: GlobalSettings;
-    restrictedRegistry?: DomainEntry[];
-    userRegistry?: DomainEntry[];
-  }>(['globalSettings', 'restrictedRegistry', 'userRegistry'], {});
+  const [snapshot, registrySnapshot] = await Promise.all([
+    getSettingsSnapshot(),
+    getRegistrySnapshot(),
+  ]);
 
-  let gSettings: GlobalSettings = result.globalSettings || { ...DEFAULT_GLOBAL_SETTINGS };
-  let registryEntries: DomainEntry[] = migrateRegistry(result.restrictedRegistry || result.userRegistry);
+  let gSettings: GlobalSettings = snapshot.globalSettings || { ...DEFAULT_GLOBAL_SETTINGS };
+  const registryEntries: DomainEntry[] = registrySnapshot.entries;
 
   initUIState(ui, gSettings, registryEntries);
 
   initTheme(gSettings.themeMode ?? 'system');
 
+  await loadLocaleCatalog(gSettings.lang);
   let dict = applyLang(gSettings.lang);
 
-  const saveSettings = () => {
-    const selTheme = $<HTMLSelectElement>('set-theme');
-    const pauseRetentionInput = $<HTMLInputElement>('set-pause-retention');
-    gSettings = {
-      osdEnabled: ui.swOsd?.checked ?? true,
-      visualizerEnabled: ui.swViz?.checked ?? true,
-      lang: (ui.selLang?.value as GlobalSettings['lang']) ?? 'en-US',
-      themeMode: (selTheme?.value as ThemeMode) ?? 'system',
-      pauseRetentionSeconds: parseInt(pauseRetentionInput?.value || '60', 10),
-    };
+  const saveSettings = async (changes: Partial<GlobalSettings>) => {
+    const updated = await patchSettings({ scope: 'global', changes });
+    gSettings = updated.globalSettings;
+	await loadLocaleCatalog(gSettings.lang);
 
     applyTheme(gSettings.themeMode);
     const btnTheme = $<HTMLButtonElement>('btn-theme');
     if (btnTheme) btnTheme.textContent = THEME_ICONS[gSettings.themeMode];
-
-    safeStorageSet({ globalSettings: gSettings });
-    broadcastSettings(gSettings);
 
     // eff: cascade i18n updates across all UI components (Cards, Registry, Presets, Remote)
     dict = applyLang(gSettings.lang);
@@ -73,11 +63,9 @@ export async function initSettings(): Promise<SettingsState> {
   bindSettingsEvents(ui, saveSettings);
   bindThemeButtonEvent(() => gSettings, (s) => { gSettings = s; });
 
-  initRegistryUI(registryEntries);
-  updateRegistryI18n(dict);
+  initRegistryUI(registryEntries, dict);
 
-  initPresetsUI();
-  updatePresetsI18n(dict);
+  initPresetsUI(dict);
 
   updateRemoteI18n(dict);
 
@@ -106,15 +94,25 @@ function initTheme(themeMode: ThemeMode): void {
 
 function bindSettingsEvents(
   ui: ReturnType<typeof getSettingsUIElements>,
-  saveSettings: () => void
+  saveSettings: (changes: Partial<GlobalSettings>) => Promise<void>
 ): void {
-  if (ui.swOsd) ui.swOsd.onchange = saveSettings;
-  if (ui.swViz) ui.swViz.onchange = saveSettings;
-  if (ui.selLang) ui.selLang.onchange = saveSettings;
+  if (ui.swOsd) ui.swOsd.onchange = () => {
+    void saveSettings({ osdEnabled: ui.swOsd?.checked ?? true });
+  };
+  if (ui.swViz) ui.swViz.onchange = () => {
+    void saveSettings({ visualizerEnabled: ui.swViz?.checked ?? true });
+  };
+  if (ui.selLang) ui.selLang.onchange = () => {
+    void saveSettings({ lang: (ui.selLang?.value as GlobalSettings['lang']) ?? 'en-US' });
+  };
   const selTheme = $<HTMLSelectElement>('set-theme');
-  if (selTheme) selTheme.onchange = saveSettings;
+  if (selTheme) selTheme.onchange = () => {
+    void saveSettings({ themeMode: (selTheme.value as ThemeMode) ?? 'system' });
+  };
   const pauseRetentionInput = $<HTMLInputElement>('set-pause-retention');
-  if (pauseRetentionInput) pauseRetentionInput.onchange = saveSettings;
+  if (pauseRetentionInput) pauseRetentionInput.onchange = () => {
+    void saveSettings({ pauseRetentionSeconds: parseInt(pauseRetentionInput.value || '60', 10) });
+  };
 }
 
 // goal: providing a quick-flip toggle for theme mode via the header button, synced with the settings dropdown
@@ -124,27 +122,14 @@ function bindThemeButtonEvent(
 ): void {
   const btnTheme = $<HTMLButtonElement>('btn-theme');
   if (!btnTheme) return;
-  btnTheme.onclick = () => {
+  btnTheme.onclick = async () => {
     const current = getSettings();
     const nextMode = getNextThemeMode(current.themeMode ?? 'system');
-    const updated = { ...current, themeMode: nextMode };
+    const updated = (await patchSettings({ scope: 'global', changes: { themeMode: nextMode } })).globalSettings;
     setSettings(updated);
     applyTheme(nextMode);
     btnTheme.textContent = THEME_ICONS[nextMode];
     const selTheme = $<HTMLSelectElement>('set-theme');
     if (selTheme) selTheme.value = nextMode;
-    safeStorageSet({ globalSettings: updated });
   };
 }
-
-// eff: broadcasts updated settings to all open tabs to allow immediate UI (OSD, visualizer) state synchronization
-function broadcastSettings(gSettings: GlobalSettings): void {
-  chrome.tabs.query({}, (tabs) => {
-    tabs.forEach((t) => {
-      if (t.id) {
-        chrome.tabs.sendMessage(t.id, { action: Actions.GLOBAL_SETTINGS_UPDATE, settings: gSettings }).catch(() => { });
-      }
-    });
-  });
-}
-

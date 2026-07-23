@@ -1,6 +1,6 @@
 // goal: renders a smooth, interpolated curve on a canvas to represent the 10-band equalizer settings
 
-import { EQ_GRADIENT, UI_SIZES } from '../constants';
+import { UI_SIZES } from '../constants';
 import type { MetricsCacheData } from './metrics-cache';
 
 interface Point {

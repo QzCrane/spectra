@@ -1,33 +1,69 @@
 // goal: transient visual notifications
-const s: { root: ShadowRoot | null; timer: ReturnType<typeof setTimeout> | null } = { root: null, timer: null };
+const s: {
+	host: HTMLElement | null;
+	root: ShadowRoot | null;
+	timer: ReturnType<typeof setTimeout> | null;
+} = { host: null, root: null, timer: null };
 
-export function showToast(msg: string): void {
-	if (!document.body) return;
-	if (!s.root) {
+export interface ToastOptions {
+	variant?: 'alternate-target';
+	targetTitle?: string;
+	targetHostname?: string;
+}
+
+export function showToast(msg: string, options: ToastOptions = {}): void {
+	if (!document.documentElement) return;
+	if (!s.host?.isConnected || !s.root) {
 		const h = document.createElement('div');
 		h.id = 'spectra-toast-host';
 		h.style.cssText = 'position:fixed;top:20%;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
-		document.body.appendChild(h);
+		document.documentElement.appendChild(h);
 
 		const ws = h.attachShadow({ mode: 'open' });
 		const st = document.createElement('style');
-		st.textContent = '.t{background:rgba(20,20,30,0.92);backdrop-filter:blur(10px);padding:14px 24px;border-radius:14px;color:#fff;font-family:system-ui;transition:0.3s;opacity:0;transform:translateY(-15px);display:flex;align-items:center;box-shadow:0 8px 32px rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1)}.v{opacity:1;transform:translateY(0)}.txt{font-size:14px;font-weight:500;white-space:nowrap}';
+		// note: toast must appear INSTANTLY (no fade-in delay). Only fade OUT when hiding.
+		// The previous `transition:0.3s;opacity:0` initial state caused a 300ms perceived delay.
+		st.textContent = '.t{background:rgba(20,20,30,0.92);backdrop-filter:blur(10px);padding:14px 24px;border-radius:14px;color:#fff;font-family:system-ui;opacity:1;transform:translateY(0);display:flex;align-items:center;box-shadow:0 8px 32px rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);transition:opacity 0.25s ease,transform 0.25s ease}.t.hide{opacity:0;transform:translateY(-15px)}.body{display:grid;gap:3px;min-width:0}.txt{font-size:14px;font-weight:500;white-space:nowrap}.meta{max-width:min(480px,70vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;opacity:.78}.meta[hidden]{display:none}';
 
 		const d = document.createElement('div');
 		d.className = 't'; d.id = 't';
 		const txt = document.createElement('span');
 		txt.className = 'txt'; txt.id = 'txt';
-		d.appendChild(txt);
+		const meta = document.createElement('span');
+		meta.className = 'meta'; meta.id = 'meta'; meta.hidden = true;
+		const body = document.createElement('span');
+		body.className = 'body';
+		body.append(txt, meta);
+		d.appendChild(body);
 		ws.append(st, d);
+		s.host = h;
 		s.root = ws;
 	}
 
 	const t = s.root.getElementById('t');
 	const txt = s.root.getElementById('txt');
-	if (!t || !txt) return;
+	const meta = s.root.getElementById('meta');
+	if (!t || !txt || !meta) return;
 
 	txt.textContent = msg;
-	t.classList.add('v');
+	const alternate = options.variant === 'alternate-target';
+	meta.toggleAttribute('hidden', !alternate);
+	meta.textContent = alternate
+		? `↗ ${options.targetTitle || options.targetHostname || ''}${options.targetTitle && options.targetHostname ? ` · ${options.targetHostname}` : ''}`
+		: '';
+	// Force reflow then remove hide class so toast appears INSTANTLY.
+	t.classList.remove('hide');
+	// Force browser to apply the visible state synchronously before scheduling hide.
+	void t.offsetHeight;
 	if (s.timer) clearTimeout(s.timer);
-	s.timer = setTimeout(() => t.classList.remove('v'), 3000);
+	s.timer = setTimeout(() => t.classList.add('hide'), 1_800);
+}
+
+// eff: ends shortcut feedback immediately when a held shortcut is released.
+export function hideToast(): void {
+	if (s.timer) {
+		clearTimeout(s.timer);
+		s.timer = null;
+	}
+	s.root?.getElementById('t')?.classList.add('hide');
 }

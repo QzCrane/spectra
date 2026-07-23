@@ -2,17 +2,16 @@
 
 import { $, isRestrictedUrl } from './utils';
 import { initNavigation } from './views/navigation';
-import { initSettings } from './views/settings';
+import { initSettings, type SettingsState } from './views/settings';
 import { initCard } from './card';
-import { createMessenger } from '@nexus/kernel';
+import { isSpectraUiEventEnvelope } from '@nexus/contracts/ui-runtime';
 import { enableSmoothScroll } from '../shared/smooth-scroll';
+import { sendSpectraRequest } from '../shared/ui-spectra-client';
 import type { EqCurveDrawerFactory } from './card/types';
 
 // eff: bootstraps the popup UI by identifying active tabs, loading settings, and rendering control cards
 async function main(): Promise<void> {
   enableSmoothScroll();
-
-  const messenger = createMessenger('popup');
 
   let activeTab: chrome.tabs.Tab | null = null;
   try {
@@ -22,28 +21,53 @@ async function main(): Promise<void> {
     // note: failure to query tabs usually indicates the popup was opened in a non-browser context (e.g. devtools)
   }
 
-  initNavigation();
+  try {
+    initNavigation();
+  } catch (error) {
+    console.error('[SPECTRA Popup] initNavigation failed:', error);
+  }
 
-  const { gSettings, registryEntries, dict } = await initSettings();
+  let settings: SettingsState;
+  try {
+    settings = await initSettings();
+  } catch (error) {
+    console.error('[SPECTRA Popup] initSettings failed:', error);
+    return;
+  }
+  const { gSettings, registryEntries, dict } = settings;
 
   // eff: lazy load side panel only when needed
-  const { initSidePanel } = await import('./side-panel');
-  initSidePanel();
+  try {
+    const { initSidePanel } = await import('./side-panel');
+    initSidePanel();
+  } catch (error) {
+    console.error('[SPECTRA Popup] initSidePanel failed:', error);
+  }
 
   if (activeTab?.id) {
-    const { bindRemoteUI } = await import('../remote');
-    bindRemoteUI(activeTab.id, dict);
+    try {
+      const { bindRemoteUI } = await import('../remote');
+      const disposeRemoteUI = bindRemoteUI(activeTab.id, dict);
+      window.addEventListener('pagehide', disposeRemoteUI, { once: true });
+    } catch (error) {
+      console.error('[SPECTRA Popup] bindRemoteUI failed:', error);
+    }
   }
 
   let currentSettings = gSettings;
   const getGlobalSettings = () => currentSettings;
 
-  // goal: keep local popup state in sync with global setting updates from the background
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.globalSettings?.newValue) {
-      currentSettings = changes.globalSettings.newValue;
+  // goal: consume only the repository's normalized, revisioned settings view
+  const onSettingsChanged = (message: unknown): false => {
+    if (isSpectraUiEventEnvelope(message) && message.type === 'spectra.settings.changed') {
+      currentSettings = message.payload.globalSettings;
     }
-  });
+    return false;
+  };
+  chrome.runtime.onMessage.addListener(onSettingsChanged);
+  window.addEventListener('pagehide', () => {
+    chrome.runtime.onMessage.removeListener(onSettingsChanged);
+  }, { once: true });
 
   const mainStage = $<HTMLElement>('main-stage');
   const bgStack = $<HTMLElement>('bg-stack');
@@ -94,8 +118,9 @@ async function main(): Promise<void> {
 
   try {
     // goal: render cards for other tabs that were recently audibly active to allow multi-tab management
-    const result = await messenger.send('TAB_GET_VISIBLE_TABS');
-    const visibleTabIds = result?.tabs ?? [];
+    const result = await sendSpectraRequest('spectra.tab.visible.list', {});
+    if (!result.ok) throw new Error(result.error.message);
+    const visibleTabIds = result.data.tabs;
     const allTabs = await chrome.tabs.query({});
     const tabMap = new Map(allTabs.map(t => [t.id, t]));
 
@@ -126,36 +151,8 @@ async function main(): Promise<void> {
         hasBgAudio = true;
       }
     }
-  } catch {
-    // rule: if the prioritized list is unavailable, fallback to iterating all tabs (less performant)
-    console.debug('[SPECTRA Popup] TAB_GET_VISIBLE_TABS not available, falling back.');
-    const allTabs = await chrome.tabs.query({});
-
-    for (const tab of allTabs) {
-      if (activeTab && tab.id === activeTab.id) continue;
-      if (isRestrictedUrl(tab.url)) continue;
-
-      if (!bgEqDrawer) {
-        const { createEqCurveDrawer } = await import('./visualizer');
-        bgEqDrawer = createEqCurveDrawer;
-      }
-
-      const success = await initCard({
-        container: bgStack,
-        template,
-        tab,
-        dict,
-        registryEntries,
-        getGlobalSettings,
-        createEqCurveDrawer: bgEqDrawer,
-        isBackground: true,
-      });
-
-      if (success) {
-        bgHeader?.classList.remove('hidden');
-        hasBgAudio = true;
-      }
-    }
+  } catch (error) {
+    console.warn('[SPECTRA Popup] Visible tab list unavailable.', error);
   }
 
   if (bgBadge) {
@@ -177,4 +174,3 @@ async function main(): Promise<void> {
 }
 
 document.addEventListener('DOMContentLoaded', main);
-

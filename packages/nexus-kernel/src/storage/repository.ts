@@ -1,33 +1,10 @@
 // goal: type-safe storage repository providing unified access to split storage modules
-// note: acts as a compatibility layer for audio config, settings, and domain registries
+// note: exposes background-owned registry and acknowledged tab-session projections
 
-import {
-  AudioConfig, DEFAULT_AUDIO_CONFIG,
-  GlobalSettings, DEFAULT_GLOBAL_SETTINGS
-} from '../messages/protocol.js';
-
-import * as audioConfig from './audio-config.js';
-import * as globalSettings from './global-settings.js';
-import * as userRegistry from './user-registry.js';
 import * as restrictedRegistry from './restricted-registry.js';
 import * as tabSessionModule from './tab-session.js';
 
 export class StorageRepository {
-  // Audio config operations
-  getAudioConfig = audioConfig.getAudioConfig;
-  setAudioConfig = audioConfig.setAudioConfig;
-  removeAudioConfig = audioConfig.removeAudioConfig;
-
-  // Global settings operations
-  getGlobalSettings = globalSettings.getGlobalSettings;
-  setGlobalSettings = globalSettings.setGlobalSettings;
-
-  // @deprecated: legacy user registry interfaces
-  getUserRegistry = userRegistry.getUserRegistry;
-  addToUserRegistry = userRegistry.addToUserRegistry;
-  removeFromUserRegistry = userRegistry.removeFromUserRegistry;
-  setUserRegistry = userRegistry.setUserRegistry;
-
   // Restricted domain registry (v3.0+)
   registry = {
     init: restrictedRegistry.initRegistry,
@@ -41,12 +18,14 @@ export class StorageRepository {
     set: restrictedRegistry.setRegistry,
   };
 
-  // Tab session config (persists across refresh, isolated per tab)
+  // Acknowledged control session (persists across same-origin refresh, isolated per tab)
   tabSession = {
-    get: tabSessionModule.getTabSessionConfig,
-    set: tabSessionModule.setTabSessionConfig,
-    remove: tabSessionModule.removeTabSessionConfig,
-    has: tabSessionModule.hasTabSessionConfig,
+    get: tabSessionModule.getTabControlSession,
+    merge: tabSessionModule.mergeTabControlSession,
+	rebind: tabSessionModule.rebindTabControlSession,
+    remove: tabSessionModule.removeTabControlSession,
+	flush: tabSessionModule.flushTabControlSession,
+    has: tabSessionModule.hasTabControlSession,
   };
 
   // eff: subscribes to 'local' storage area changes
@@ -65,4 +44,3 @@ export class StorageRepository {
     return () => { };
   }
 }
-

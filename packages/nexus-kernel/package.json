@@ -4,6 +4,7 @@
 	"private": true,
 	"description": "NEXUS Core Kernel - Typed RPC Bus & Storage Repository",
 	"type": "module",
+	"sideEffects": false,
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
@@ -24,7 +25,8 @@
 	"scripts": {
 		"build": "bun tsc -b",
 		"dev": "bun tsc -b --watch",
-		"typecheck": "bun tsc --noEmit"
+		"lint": "biome check src --max-diagnostics=100",
+		"typecheck": "bun tsc --noEmit --tsBuildInfoFile typecheck.tsbuildinfo"
 	},
 	"dependencies": {
 		"@nexus/contracts": "workspace:*"

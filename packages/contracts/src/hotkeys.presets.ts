@@ -2,7 +2,7 @@
 // description: default global hotkeys using common and non-conflicting keys
 // note: users can modify in Options page or disable for specific websites
 
-import type { HotkeyBinding, KeyModifiers } from './hotkeys.contracts';
+import type { HotkeyBinding, KeyModifiers } from './hotkeys.contracts.js';
 
 // M: default modifiers (local copy to avoid circular dependencies)
 const M: Readonly<KeyModifiers> = { ctrl: false, alt: false, shift: false, meta: false };

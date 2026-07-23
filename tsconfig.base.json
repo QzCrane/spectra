@@ -18,12 +18,15 @@
     "declarationMap": true,
     "sourceMap": true,
     "baseUrl": ".",
-    "paths": {
-      "@nexus/contracts": ["packages/contracts/src"],
+		"paths": {
+			"@nexus/contracts": ["packages/contracts/src"],
+		"@nexus/contracts/bootstrap": ["packages/contracts/src/spectra.bootstrap.ts"],
+		"@nexus/contracts/ui-runtime": ["packages/contracts/src/spectra.ui-runtime.ts"],
+		"@nexus/contracts/ui-settings-runtime": ["packages/contracts/src/spectra.ui-settings-runtime.ts"],
+		"@nexus/contracts/content-runtime": ["packages/contracts/src/spectra.content-runtime.ts"],
       "@nexus/kernel": ["packages/nexus-kernel/src"],
       "@nexus/ui-kit": ["packages/ui-kit/src"],
-      "@nexus/audio-engine": ["packages/features/audio-engine/src"],
-      "@nexus/ai-engine": ["packages/features/ai-engine/src"]
+      "@nexus/audio-engine": ["packages/features/audio-engine/src"]
     },
     "types": ["chrome-types"]
   },

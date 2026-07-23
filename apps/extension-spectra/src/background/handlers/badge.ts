@@ -1,58 +1,208 @@
-// goal: manages the extension icon badge (text and background color) based on user interaction and audio state
-// rule: the badge is "sticky" per tab but only appears if the user has explicitly interacted with audio settings
+// goal: projects per-tab extension usage plus acknowledged audio state onto the Action badge
+// rule: untouched page-native 0-100 observations stay hidden; every successful extension action is sticky until tab close
 
 import { router, badgeState, BADGE_COLORS } from '../state';
 import { isTabExists } from '../helpers';
+import {
+	audioSessionMatchesControlDocument,
+	compileEffectiveVolume,
+	isActiveCaptureLifecycle,
+	resolveAudioVolumeState,
+	type AudioSessionSnapshot,
+	type ControlSessionPatch,
+	type ControlSnapshot,
+} from '@nexus/contracts';
+import { hasBadgeUsage, markBadgeUsed } from '../badge-usage';
+
+interface BadgeUpdate {
+	volume: number;
+	muted: boolean;
+	enabled?: boolean;
+	isCapture: boolean;
+	userInteracted?: boolean;
+}
+
+type BadgeAuthority = 'control' | 'session' | 'legacy';
+type BadgeIdentity = Pick<ControlSnapshot, 'documentId' | 'origin' | 'generation'>;
+const USED_BADGE_PLACEHOLDER = '•';
+const USED_BADGE_PLACEHOLDER_COLOR = '#94a3b8';
+
+async function applyBadgeForTab(
+	tabId: number,
+	update: BadgeUpdate,
+	authority: BadgeAuthority,
+	identity: BadgeIdentity | null = null,
+): Promise<void> {
+	if (!await isTabExists(tabId)) {
+		badgeState.delete(tabId);
+		return;
+	}
+
+	const { volume, muted, isCapture, userInteracted } = update;
+	if (!userInteracted) {
+		badgeState.delete(tabId);
+		try {
+			await chrome.action.setBadgeText({ tabId, text: '' });
+		} catch {
+			return;
+		}
+		return;
+	}
+
+	let badgeText = '';
+	const enabled = update.enabled ?? true;
+	const volumeState = resolveAudioVolumeState({
+		volume,
+		muted,
+		actualMode: isCapture ? 'capture' : 'bypass',
+		phase: isCapture ? 'active' : 'idle',
+	});
+	let badgeColor: string = volumeState === 'capture'
+		? BADGE_COLORS.CAPTURE
+		: volumeState === 'silent'
+			? BADGE_COLORS.MUTED
+			: BADGE_COLORS.NATIVE;
+	if (!enabled) {
+		badgeText = volume.toString();
+		badgeColor = '#94a3b8';
+	} else if (volumeState === 'silent') {
+		badgeText = 'M';
+		badgeColor = BADGE_COLORS.MUTED;
+	} else {
+		badgeText = volume.toString();
+	}
+
+	badgeState.set(tabId, {
+		volume,
+		muted,
+		enabled,
+		isCapture,
+		userInteracted: true,
+		authority,
+		text: badgeText,
+		documentId: identity?.documentId ?? null,
+		origin: identity?.origin ?? null,
+		generation: identity?.generation ?? null,
+	});
+	try {
+		await chrome.action.setBadgeText({ tabId, text: badgeText });
+		await chrome.action.setBadgeBackgroundColor({ tabId, color: badgeColor });
+		await chrome.action.setBadgeTextColor({ tabId, color: BADGE_COLORS.WHITE });
+	} catch {
+		badgeState.delete(tabId);
+	}
+}
+
+async function resolveStickyUsage(tabId: number, userInteracted: boolean | undefined): Promise<boolean> {
+	return userInteracted ? markBadgeUsed(tabId) : hasBadgeUsage(tabId);
+}
+
+// post: every successful plugin action makes usage visible immediately. Until
+// an audio ACK exists, a neutral dot reports only the truthful usage fact and
+// does not guess a volume, mute state, or Capture color.
+export async function markBadgeUsedForTab(tabId: number): Promise<void> {
+	await markBadgeUsed(tabId);
+	if (badgeState.get(tabId)?.userInteracted || !await isTabExists(tabId)) return;
+	try {
+		// Chrome retains the last per-tab projection across document and worker
+		// replacement. Do not replace a truthful numeric ACK with the placeholder
+		// merely because this worker has not reconstructed its volatile mirror yet.
+		const currentText = await chrome.action.getBadgeText?.({ tabId }).catch(() => '');
+		if (currentText) return;
+		await chrome.action.setBadgeText({ tabId, text: USED_BADGE_PLACEHOLDER });
+		await chrome.action.setBadgeBackgroundColor({ tabId, color: USED_BADGE_PLACEHOLDER_COLOR });
+		await chrome.action.setBadgeTextColor({ tabId, color: BADGE_COLORS.WHITE });
+	} catch {
+		return;
+	}
+}
+
+// Chrome may clear the visible per-tab Action projection on navigation even
+// though the monotonic usage fact remains valid. Restore only an existing fact;
+// this function never turns a passive page observation into extension usage.
+export async function restoreBadgeUsageForTab(tabId: number): Promise<void> {
+	if (await hasBadgeUsage(tabId)) await markBadgeUsedForTab(tabId);
+}
+
+export async function updateBadgeForTab(tabId: number, update: BadgeUpdate): Promise<void> {
+	return applyBadgeForTab(tabId, {
+		...update,
+		userInteracted: await resolveStickyUsage(tabId, update.userInteracted),
+	}, 'legacy');
+}
+
+export async function updateBadgeFromControlProjection(
+	snapshot: Pick<ControlSnapshot, 'tabId' | 'documentId' | 'origin' | 'generation'>,
+	projection: ControlSessionPatch,
+	isCaptureActive: boolean,
+	userInteracted: boolean,
+): Promise<void> {
+	const stickyInteraction = badgeState.get(snapshot.tabId)?.userInteracted === true
+		|| await resolveStickyUsage(snapshot.tabId, userInteracted);
+	if (typeof projection.volumeBase !== 'number' || typeof projection.boost !== 'number') {
+		if (stickyInteraction) {
+			await markBadgeUsedForTab(snapshot.tabId);
+			return;
+		}
+		return applyBadgeForTab(snapshot.tabId, {
+			volume: 0,
+			muted: false,
+			isCapture: false,
+			userInteracted: false,
+		}, 'control', snapshot);
+	}
+	return applyBadgeForTab(snapshot.tabId, {
+		volume: compileEffectiveVolume(projection.volumeBase, projection.boost),
+		muted: projection.mediaMuted === true,
+		enabled: projection.audioEnabled ?? true,
+		isCapture: isCaptureActive,
+		userInteracted: stickyInteraction,
+	}, 'control', snapshot);
+}
+
+export async function updateBadgeFromSession(
+	snapshot: AudioSessionSnapshot,
+	userInteracted: boolean,
+): Promise<void> {
+	const previous = badgeState.get(snapshot.tabId);
+	const stickyInteraction = previous?.userInteracted === true
+		|| await resolveStickyUsage(snapshot.tabId, userInteracted);
+	const keepControlActual = previous?.authority === 'control'
+		&& audioSessionMatchesControlDocument(snapshot, {
+			tabId: snapshot.tabId,
+			documentId: previous.documentId ?? '',
+			origin: previous.origin ?? '',
+		});
+	// AudioSessionSnapshot owns lifecycle only. Without a matching actual control
+	// projection, hiding the badge is safer than publishing stale volume/color.
+	if (!keepControlActual) {
+		badgeState.delete(snapshot.tabId);
+		// Chrome retains the last per-tab Action projection across navigation and
+		// worker suspension. Once this tab has used SPECTRA, do not erase that
+		// truthful last ACK while the new document is still establishing its own
+		// matching control projection; equally, do not invent a Capture color.
+		if (stickyInteraction) return;
+		// Badge rendering is a best-effort projection of acknowledged audio state.
+		// A missing/unavailable Action API must never turn a successful processor
+		// transition into a failed Capture operation.
+		return chrome.action?.setBadgeText?.({ tabId: snapshot.tabId, text: '' })
+			.catch(() => undefined) ?? Promise.resolve();
+	}
+	return applyBadgeForTab(snapshot.tabId, {
+		volume: previous.volume,
+		muted: previous.muted,
+		enabled: previous.enabled,
+		isCapture: isActiveCaptureLifecycle(snapshot),
+		userInteracted: stickyInteraction,
+	}, 'control', snapshot);
+}
 
 // eff: registers listeners for BADGE_UPDATE and BADGE_CLEAR actions
 export function registerBadgeHandlers(): void {
 	router.on('BADGE_UPDATE', async (req, sender) => {
 		const tabId = req.tabId ?? sender.tab?.id;
 		if (!tabId) return;
-
-		// pre: verify the tab still exists before attempting UI updates
-		if (!await isTabExists(tabId)) {
-			badgeState.delete(tabId);
-			return;
-		}
-
-		const { volume, muted, isCapture, userInteracted } = req;
-
-		// rule: if no user interaction is detected, suppressed the badge to maintain a clean UI
-		if (!userInteracted) {
-			badgeState.delete(tabId);
-			try {
-				await chrome.action.setBadgeText({ tabId, text: '' });
-			} catch { }
-			return;
-		}
-
-		// eff: calculate badge visuals (M for muted, numeric volume otherwise; color reflects mode)
-		let badgeText = '';
-		// note: default enabled to true if missing (legacy)
-		const enabled = (req as any).enabled ?? true;
-		let badgeColor: string = (req as any).isCapture ? BADGE_COLORS.CAPTURE : BADGE_COLORS.NATIVE;
-
-		if (!enabled) {
-			// rule: if disabled, show volume but in gray to indicate inactive state
-			badgeText = volume.toString();
-			badgeColor = '#94a3b8'; // Slate-400 (Gray)
-		} else if (muted || volume === 0) {
-			badgeText = 'M';
-			badgeColor = BADGE_COLORS.MUTED;
-		} else {
-			badgeText = volume.toString();
-		}
-
-		badgeState.set(tabId, { volume, muted, isCapture, text: badgeText });
-
-		try {
-			await chrome.action.setBadgeText({ tabId, text: badgeText });
-			await chrome.action.setBadgeBackgroundColor({ tabId, color: badgeColor });
-			await chrome.action.setBadgeTextColor({ tabId, color: BADGE_COLORS.WHITE });
-		} catch {
-			badgeState.delete(tabId);
-		}
+		await updateBadgeForTab(tabId, req);
 	});
 
 	router.on('BADGE_CLEAR', async (req, sender) => {
@@ -60,7 +210,10 @@ export function registerBadgeHandlers(): void {
 		if (!tabId) return;
 
 		badgeState.delete(tabId);
-
-		chrome.action.setBadgeText({ tabId, text: '' }).catch(() => { });
+		if (await hasBadgeUsage(tabId)) {
+			await markBadgeUsedForTab(tabId);
+			return;
+		}
+		await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => undefined);
 	});
 }

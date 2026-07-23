@@ -73,22 +73,6 @@ export interface MetricsCacheData {
   isValid: boolean;
 }
 
-// ContentStatusResponse: unified response format from the content script reporting its live audio state
-export interface ContentStatusResponse {
-  config: AudioConfig;
-  hasAudio: boolean;
-  isPlaying: boolean;
-  // mode: identifies the current signal path (Standard WebAudio or Tab Capture)
-  mode: 'NATIVE_WEBAUDIO' | 'NATIVE_LITE' | 'CAPTURE';
-  userInteracted: boolean;
-  // pausedAt: epoch timestamp when playback stopped; null if currently playing
-  pausedAt: number | null;
-}
-
-export interface VisualizerDataResponse {
-  buffer: number[] | null;
-}
-
 export type RenderCallback = () => void;
 export type MetricsChangeCallback = () => void;
 

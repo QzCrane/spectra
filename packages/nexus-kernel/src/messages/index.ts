@@ -8,5 +8,10 @@ export { createMessenger } from './client.js';
 export type { NexusMessenger } from './client.js';
 
 // Router factory for server-side (Background/ServiceWorker)
-export { createRouter } from './router.js';
-export type { NexusRouter } from './router.js';
+export {
+	createRouter,
+	isNexusAction,
+	isValidNexusRequestPayload,
+	parseNexusMessage,
+} from './router.js';
+export type { NexusMessageEnvelope, NexusRouter } from './router.js';

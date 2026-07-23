@@ -3,6 +3,7 @@
 import type { I18NMap, I18NDict } from '../../types';
 import { EN_US } from './en';
 import { ZH_CN } from './zh-CN';
+import { ZH_TW } from './zh-TW';
 import { JA_JP } from './ja-JP';
 import { KO_KR } from './ko-KR';
 import { ES_ES } from './es-ES';
@@ -13,6 +14,7 @@ import { RU_RU } from './ru-RU';
 export const I18N: I18NMap = {
   'en-US': EN_US,
   'zh-CN': ZH_CN,
+  'zh-TW': ZH_TW,
   'ja-JP': JA_JP,
   'ko-KR': KO_KR,
   'es-ES': ES_ES,
@@ -32,6 +34,7 @@ export function getDict(lang: string): I18NDict {
 
 export { EN_US } from './en';
 export { ZH_CN } from './zh-CN';
+export { ZH_TW } from './zh-TW';
 export { JA_JP } from './ja-JP';
 export { KO_KR } from './ko-KR';
 export { ES_ES } from './es-ES';

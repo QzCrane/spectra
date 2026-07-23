@@ -1,8 +1,15 @@
 // goal: handles the creation and initial population of a tab control card's DOM structure from a template
 
 import type { I18NDict, CardUIElements } from '../types';
-import { getDomain } from '../utils/dom';
+import { getDomain, getWebsiteIconUrl } from '../utils/dom';
 import { getCardUIElements } from './ui-elements';
+
+function setButtonLabel(button: HTMLElement | null, value: unknown, fallback: string): void {
+	if (!button) return;
+	const label = typeof value === 'string' && value.trim().length > 0 ? value : fallback;
+	button.title = label;
+	button.setAttribute('aria-label', label);
+}
 
 // eff: clones the card template, injects tab-specific metadata and translations, and appends it to the popup container
 export function prepareCardDom(params: {
@@ -26,13 +33,43 @@ export function prepareCardDom(params: {
 	if (ui.tMono) ui.tMono.innerText = dict.mono;
 	if (ui.tEq) ui.tEq.innerText = dict.eqTitle;
 
-	ui.btnSave.title = dict.saveTooltip;
-	ui.btnReset.title = dict.resetTooltip;
-	ui.maskText.innerHTML = `<div>${dict.paused}</div><div style="font-size:11px; opacity:0.7; margin-top:4px; font-weight:400;">${dict.clickToResume}</div>`;
+	setButtonLabel(ui.btnSave, dict.saveTooltip, 'Save');
+	setButtonLabel(ui.btnReset, dict.resetTooltip, 'Reset');
+	setButtonLabel(ui.btnSaveGlobal, dict.btnSaveAsGlobal, 'Save as Global Preset');
+	ui.maskText.textContent = '';
+	const paused = document.createElement('div');
+	paused.textContent = dict.paused;
+	const resume = document.createElement('div');
+	resume.className = 'sleep-resume-hint';
+	resume.textContent = dict.clickToResume;
+	ui.maskText.append(paused, resume);
 	ui.title.innerText = tab.title || '';
 	ui.title.title = tab.title || '';
 	ui.domain.innerText = domain;
-	ui.icon.src = tab.favIconUrl || 'icon.png';
+	const fallbackIcon = chrome.runtime.getURL('icons/icon48.png');
+	ui.icon.src = getWebsiteIconUrl(tab.url, tab.favIconUrl, fallbackIcon);
+	ui.icon.alt = '';
+	// rule: provide fallback when favicon fails to load (e.g. CSP restrictions)
+	ui.icon.onerror = () => {
+		ui.icon.onerror = null;
+		ui.icon.src = fallbackIcon;
+	};
+	ui.mask.setAttribute('role', 'button');
+	ui.mask.setAttribute('aria-label', `${dict.paused}. ${dict.clickToResume}`);
+	ui.mask.tabIndex = 0;
+	ui.slider.setAttribute('aria-label', `Volume for ${tab.title || domain}`);
+	ui.mute.setAttribute('aria-label', `${dict.btnMute}: ${tab.title || domain}`);
+	ui.mute.setAttribute('aria-pressed', 'false');
+	if (ui.btnPause) ui.btnPause.setAttribute('aria-label', dict.btnPause);
+	if (ui.btnPip) {
+		ui.btnPip.setAttribute('aria-label', dict.btnPip);
+		ui.btnPip.setAttribute('aria-pressed', 'false');
+	}
+	if (ui.btnHotkeyTarget) {
+		ui.btnHotkeyTarget.setAttribute('aria-label', dict.btnHotkeyTarget);
+		ui.btnHotkeyTarget.setAttribute('aria-pressed', 'false');
+	}
+	if (ui.btnGotoTab) ui.btnGotoTab.setAttribute('aria-label', dict.btnGotoTab);
 
 	container.appendChild(cardFragment);
 

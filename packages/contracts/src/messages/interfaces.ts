@@ -17,7 +17,7 @@ export interface INexusMessenger {
 
 	on<A extends NexusAction>(
 		action: A,
-		handler: (req: NexusRequest<A>) => void | NexusResponse<A>
+		handler: (req: NexusRequest<A>) => undefined | NexusResponse<A>
 	): () => void;
 }
 

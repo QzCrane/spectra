@@ -1,9 +1,9 @@
 // goal: defines visual and interaction bounds for audio parameters within the popup UI
 
 export const AUDIO_UI = {
-  // MAX_VOLUME: maps to the maximum allowable boost (800%) in the volume slider
+  // One product control projects to native volumeBase (0–100) plus the hidden
+  // processor boost (1–8). The UI never exposes those implementation fields.
   MAX_VOLUME: 800,
-  // VOLUME_STEP: incremental value for mouse wheel or keyboard adjustments
   VOLUME_STEP: 10,
   // EQ_MIN/MAX: decibel range for the graphic equalizer UI
   EQ_MIN: -12,

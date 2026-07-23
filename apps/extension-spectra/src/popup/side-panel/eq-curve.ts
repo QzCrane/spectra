@@ -9,7 +9,7 @@ let cachedInputs: NodeListOf<HTMLInputElement> | null = null;
 
 function internalDraw(): void {
 	if (!cachedCanvas || !cachedInputs || cachedInputs.length === 0) return;
-	if (!metricsCache || !metricsCache.isValid) return;
+	if (!metricsCache?.isValid) return;
 
 	const ctx = cachedCanvas.getContext('2d');
 	if (!ctx) return;
@@ -48,7 +48,7 @@ export function drawSidePanelEqCurve(
 	const values: number[] = [];
 	inputs.forEach((inp) => values.push(parseFloat(inp.value) || 0));
 
-	if (metricsCache && metricsCache.isValid) {
+	if (metricsCache?.isValid) {
 		drawEqCurve(ctx, values, metricsCache, '#2563eb');
 		return;
 	}

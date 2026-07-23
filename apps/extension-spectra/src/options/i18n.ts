@@ -1,30 +1,30 @@
 // goal: manages internationalization for the options page, including language persistence and dynamic text injection
 
-import { DICT } from './i18n-dict';
-import { safeStorageGet, safeStorageSet } from '../shared/safe-storage';
+import type { SupportedLanguage } from '@nexus/contracts';
+import { getSettingsSnapshot, patchSettings } from '../shared/settings-client';
+import { getActionName, getOptionsDictionary, loadLocaleCatalog } from '../shared/i18n/catalog';
 
-let currentLang = 'en-US';
-let onLangChangeCallbacks: (() => void)[] = [];
+let currentLang: SupportedLanguage = 'en-US';
+const onLangChangeCallbacks: (() => void)[] = [];
 
 export async function initI18n(): Promise<void> {
 	try {
-		const result = await safeStorageGet<{ globalSettings?: { language?: string } }>(['globalSettings'], {});
-		currentLang = result.globalSettings?.language ?? 'en-US';
+		currentLang = (await getSettingsSnapshot()).globalSettings.lang;
 	} catch {
 		currentLang = 'en-US';
 	}
+	await loadLocaleCatalog(currentLang);
 
 	const select = document.getElementById('lang-select') as HTMLSelectElement | null;
 	if (select) {
 		select.value = currentLang;
 		select.addEventListener('change', async () => {
-			currentLang = select.value;
+			currentLang = select.value as SupportedLanguage;
 			try {
-				const result = await safeStorageGet<{ globalSettings?: { language?: string } }>(['globalSettings'], {});
-				await safeStorageSet({
-					globalSettings: { ...result.globalSettings, language: currentLang }
-				});
+				const snapshot = await patchSettings({ scope: 'global', changes: { lang: currentLang } });
+				currentLang = snapshot.globalSettings.lang;
 			} catch { }
+			await loadLocaleCatalog(currentLang);
 			applyI18n();
 			onLangChangeCallbacks.forEach(cb => cb());
 		});
@@ -34,8 +34,8 @@ export async function initI18n(): Promise<void> {
 }
 
 function applyI18n(): void {
-	const dict = DICT[currentLang] ?? DICT['en-US'];
-	if (!dict) return;
+	const dict = getOptionsDictionary(currentLang);
+	document.documentElement.lang = currentLang;
 
 	document.querySelectorAll('[data-i18n]').forEach(el => {
 		const key = el.getAttribute('data-i18n');
@@ -49,12 +49,19 @@ function applyI18n(): void {
 }
 
 export function t(key: string): string {
-	const dict = DICT[currentLang] ?? DICT['en-US'];
-	return dict?.[key] ?? key;
+	return getOptionsDictionary(currentLang)[key] ?? key;
+}
+
+export function tf(key: string, values: Readonly<Record<string, string | number>>): string {
+	let message = t(key);
+	for (const [name, value] of Object.entries(values)) {
+		message = message.replaceAll(`{${name}}`, String(value));
+	}
+	return message;
 }
 
 export function getCurrentLang(): string { return currentLang; }
 
 export function onLangChange(callback: () => void): void { onLangChangeCallbacks.push(callback); }
 
-export { getActionName } from './i18n-actions';
+export { getActionName };

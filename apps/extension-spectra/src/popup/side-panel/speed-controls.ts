@@ -17,13 +17,13 @@ export function addWheelSupport(
 ): void {
 	if (!slider) return;
 	// note: passive: false is required to support preventDefault() and block page scrolling during adjustment
-	slider.addEventListener('wheel', (e) => {
+	slider.onwheel = (e) => {
 		e.preventDefault();
 		let v = parseFloat(slider.value);
 		v = e.deltaY < 0 ? Math.min(v + step, max) : Math.max(v - step, min);
 		slider.value = String(v);
 		onUpdate(v);
-	}, { passive: false });
+	};
 }
 
 // eff: binds side panel speed slider and input to the update function, using unified config flow
@@ -56,7 +56,7 @@ export function bindSpeedControls(c: SpeedControls, updateFn: (changes: Partial<
 			const speed = parseFloat((e.target as HTMLInputElement).value) || 1;
 			updateSpeed(speed);
 		};
-		c.speedInput.addEventListener('wheel', (e) => {
+		c.speedInput.onwheel = (e) => {
 			e.preventDefault();
 			const current = parseFloat(c.speedInput!.value) || 1;
 			const delta = e.deltaY < 0 ? 0.1 : -0.1;
@@ -64,7 +64,7 @@ export function bindSpeedControls(c: SpeedControls, updateFn: (changes: Partial<
 			c.speedInput!.value = newSpeed.toFixed(2);
 			if (c.speedSlider) c.speedSlider.value = String(newSpeed);
 			updateSpeed(newSpeed);
-		}, { passive: false });
+		};
 	}
 }
 

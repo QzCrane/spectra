@@ -3,7 +3,8 @@
 export const AudioMode = {
 	NATIVE_WEBAUDIO: 'NATIVE_WEBAUDIO',
 	NATIVE_LITE: 'NATIVE_LITE',
-	CAPTURE: 'CAPTURE'
+	CAPTURE: 'CAPTURE',
+	DISABLED: 'DISABLED'
 } as const;
 
 export type AudioModeType = typeof AudioMode[keyof typeof AudioMode];

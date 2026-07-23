@@ -2,10 +2,8 @@
 
 // TIMING: values in milliseconds controlling animation synchronization and renderer updates
 export const TIMING = {
-  // CAPTURE_INIT_DELAY: allowance for Chrome's offscreen document to bootstrap before sending commands
-  CAPTURE_INIT_DELAY: 300,
-  // VIZ_FRAME_INTERVAL: target interval (~30 FPS) for polling visualizer data from content/offscreen
-  VIZ_FRAME_INTERVAL: 32,
+  // VIZ_FRAME_INTERVAL: maximum 15 samples per second across one shared popup scheduler
+  VIZ_FRAME_INTERVAL: 67,
   // EQ_DRAWER_DELAY: matches CSS transition time to ensure canvas resizing triggers after the drawer is fully open
   EQ_DRAWER_DELAY: 310,
   METRICS_INIT_LOOPS: 20,
