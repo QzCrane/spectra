@@ -6,17 +6,25 @@ import { t, tf, getActionName, getCurrentLang, onLangChange } from './i18n';
 import { getSettingsSnapshot, patchSettings } from '../shared/settings-client';
 import { isSlotHotkeyAction } from './supported-hotkey-actions';
 
-// note: PRESET_COMMANDS must match the specific shortcut keys defined in the manifest; they cannot be renamed but their actions can be changed
-const PRESET_COMMANDS = ['volume_up', 'volume_down', 'toggle_mute', 'speed_up'];
-const SLOT_COMMANDS = Array.from({ length: 16 }, (_, i) => `slot_${String(i + 1).padStart(2, '0')}`);
-
 let settings: HotkeySettings = { ...DEFAULT_HOTKEY_SETTINGS };
+let presetCommands: string[] = [];
+let slotCommands: string[] = [];
 
 // eff: initializes the slots editor by loading persistence state and establishing an i18n re-render listener
 export async function initSlotsEditor(): Promise<void> {
+	loadCommandRegistry();
 	await loadSettings();
 	renderSlots();
 	onLangChange(renderSlots);
+}
+
+// The explicit extension manifest is the sole owner of configurable command
+// names. chrome.commands.getAll() also returns Chromium's implicit
+// `_execute_action`, which must not become a user-facing Options row.
+function loadCommandRegistry(): void {
+	const names = Object.keys(chrome.runtime.getManifest().commands ?? {});
+	presetCommands = names.filter((name) => !name.startsWith('slot_'));
+	slotCommands = names.filter((name) => name.startsWith('slot_'));
 }
 
 async function loadSettings(): Promise<void> {
@@ -37,13 +45,13 @@ function renderSlots(): void {
 
 	container.replaceChildren();
 
-	PRESET_COMMANDS.forEach(cmd => {
+	presetCommands.forEach(cmd => {
 		const action = settings.slots[cmd] ?? 'none';
 		const row = createSlotRow(cmd, action, true);
 		container.appendChild(row);
 	});
 
-	SLOT_COMMANDS.forEach(cmd => {
+	slotCommands.forEach(cmd => {
 		const action = settings.slots[cmd] ?? 'none';
 		const row = createSlotRow(cmd, action, false);
 		container.appendChild(row);

@@ -1,7 +1,7 @@
 // goal: manages the lifecycle and event logic for the hotkey editing modal
 
 import type { HotkeyBinding, KeyCombo, HotkeyAction } from '@nexus/contracts';
-import { DEFAULT_MODIFIERS } from '@nexus/contracts';
+import { DEFAULT_MODIFIERS, isSpectraDefaultHotkeyKeyCombo } from '@nexus/contracts';
 import { formatKeyCombo, formatParams, parseParams } from './formatters';
 import { EDITABLE_HOTKEY_GROUPS, isEditableHotkeyAction } from './supported-hotkey-actions';
 import { getActionName, getCurrentLang, t } from './i18n';
@@ -19,6 +19,7 @@ const cancelBtn = document.getElementById('modal-cancel')!;
 const saveBtn = document.getElementById('modal-save')!;
 const closeBtn = modal.querySelector('.modal-close')!;
 const backdrop = modal.querySelector('.modal-backdrop')!;
+const reservedHotkeyWarning = document.getElementById('reserved-hotkey-warning');
 const legacyWarning = document.getElementById('legacy-action-warning');
 let previouslyFocused: HTMLElement | null = null;
 
@@ -47,10 +48,14 @@ export function openModal(binding: HotkeyBinding | null, onSave: (b: HotkeyBindi
 		action: 'none' as HotkeyAction,
 	};
 	onSaveCallback = onSave;
-	recordedKey = { ...currentBinding.key };
+	recordedKey = {
+		...currentBinding.key,
+		modifiers: { ...currentBinding.key.modifiers },
+	};
 	populateActionSelect();
 	ensureLegacyActionOption(currentBinding.action);
 	keyInput.value = binding ? formatKeyCombo(binding.key) : '';
+	renderReservedHotkeyWarning();
 	actionSelect.value = currentBinding.action;
 	handleActionChange();
 	if (currentBinding.params) {
@@ -116,6 +121,8 @@ function handleKeyRecord(e: KeyboardEvent): void {
 		modifiers: { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey }
 	};
 	keyInput.value = formatKeyCombo(recordedKey);
+	renderReservedHotkeyWarning();
+	updateSaveAvailability();
 }
 
 // eff: toggles the visibility of the parameters input field based on whether the selected action requires additional data (e.g. Speed set)
@@ -125,7 +132,7 @@ function handleActionChange(): void {
 	paramsContainer.classList.toggle('hidden', !needsParams);
 	paramsContainer.toggleAttribute('hidden', !needsParams);
 	const editable = isEditableHotkeyAction(action);
-	(saveBtn as HTMLButtonElement).disabled = !editable;
+	updateSaveAvailability();
 	if (legacyWarning) {
 		legacyWarning.hidden = editable;
 		legacyWarning.textContent = editable
@@ -147,6 +154,7 @@ function handleActionChange(): void {
 function handleSave(): void {
 	if (!currentBinding || !onSaveCallback) return;
 	if (!recordedKey.code) return;
+	if (renderReservedHotkeyWarning()) return;
 	const action = actionSelect.value as HotkeyAction;
 	if (!isEditableHotkeyAction(action)) return;
 	const parsedParams = parseParams(action, paramsInput.value);
@@ -159,8 +167,29 @@ function handleSave(): void {
 	currentBinding.key = { ...recordedKey };
 	currentBinding.action = action;
 	currentBinding.params = parsedParams;
+	currentBinding.enabled = true;
+	delete currentBinding.disabledReason;
 	onSaveCallback(currentBinding);
 	closeModal();
+}
+
+function renderReservedHotkeyWarning(): boolean {
+	const reserved = Boolean(recordedKey.code)
+		&& isSpectraDefaultHotkeyKeyCombo(recordedKey);
+	keyInput.setAttribute('aria-invalid', String(reserved));
+	if (reservedHotkeyWarning) {
+		reservedHotkeyWarning.hidden = !reserved;
+		reservedHotkeyWarning.textContent = reserved
+			? t('modal_reserved_default_hotkey')
+			: '';
+	}
+	return reserved;
+}
+
+function updateSaveAvailability(): void {
+	const action = actionSelect.value as HotkeyAction;
+	(saveBtn as HTMLButtonElement).disabled = !isEditableHotkeyAction(action)
+		|| isSpectraDefaultHotkeyKeyCombo(recordedKey);
 }
 
 function populateActionSelect(): void {

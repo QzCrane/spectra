@@ -1,16 +1,15 @@
-// goal: unifies configuration updates with conflict resolution (mute vs volume) and side-effects (OSD/Badge sync)
+// goal: unifies configuration updates with conflict resolution, actual apply, Badge sync and persistence
 // ban: direct state mutation of the global config outside this module
 
 import type { AudioConfig } from '@nexus/kernel';
 import { resolveAudioVolume, rpcFailure, type SpectraResponse } from '@nexus/contracts';
-import { showOSD, showSpeedOSD } from '../../ui/osd';
 import type { PolicyExecutorDeps, PolicyExecutorState } from '../../types';
 import type { InternalState } from './types';
 import type { PolicyApplicationOptions, PolicyUpdateOptions } from './types';
 import { updateBadge } from './badge-sync';
 import { sendSpectraRequest } from '../../../shared/spectra-client';
 
-// eff: updates internal state, triggers badge/OSD refreshes, and persists changes to storage
+// eff: updates internal state, applies policy, refreshes Badge state and persists the snapshot
 export function updateConfig(
 	deps: PolicyExecutorDeps,
 	state: PolicyExecutorState,
@@ -19,8 +18,6 @@ export function updateConfig(
 	options: PolicyUpdateOptions = {},
 	applyStateFn: (options?: PolicyApplicationOptions) => Promise<void>
 ): Promise<SpectraResponse<'spectra.audio.config.set'>> {
-	const { settingsManager } = deps;
-
 	// rule: any configuration update NOT from native sync is considered a user engagement
 	// this activates the "Special Features" like sticky badge and bi-directional sync
 	if (!options.isNativeSync) {
@@ -60,22 +57,6 @@ export function updateConfig(
 		}
 
 		updateBadge(deps, state, internalState);
-
-		if (options.showOSD) {
-			const settings = settingsManager.get();
-			// note: show speed OSD for speed-only changes, volume OSD for other changes
-			const isSpeedOnlyChange = Object.keys(changes).length === 1 && 'speed' in changes;
-			if (isSpeedOnlyChange) {
-				showSpeedOSD(newConfig.speed ?? 1, settings, state.isPopupOpen);
-			} else {
-				showOSD(
-					state.config,
-					state.actualMode === 'capture' && state.phase === 'active',
-					settings,
-					state.isPopupOpen
-				);
-			}
-		}
 
 		return persistConfigSnapshot(internalState, state.config, state.generation);
 	})();

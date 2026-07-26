@@ -28,7 +28,7 @@ function renderLegacyWarning(): void {
 	warning.hidden = count === 0;
 	warning.textContent = count === 0
 		? ''
-		: count === 1 ? t('legacy_pitch_one') : tf('legacy_pitch_many', { count });
+		: count === 1 ? t('legacy_disabled_one') : tf('legacy_disabled_many', { count });
 }
 
 async function loadSettings(forceRefresh = false): Promise<void> {

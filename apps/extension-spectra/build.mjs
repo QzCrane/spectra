@@ -20,15 +20,8 @@ import { execFileSync } from 'node:child_process';
 import sharp from 'sharp';
 import { minify } from 'terser';
 import { checkProductionArtifacts } from './scripts/check-production-artifacts.mjs';
-import {
-	collectExternalBoundaryProperties,
-	collectExternalJsonProperties,
-	collectRuntimeStringProperties,
-} from './scripts/external-boundary-properties.mjs';
-import {
-	collectLocaleCatalogPropertyNames,
-	writeI18nAssets,
-} from './scripts/i18n-assets.ts';
+import { writeI18nAssets } from './scripts/i18n-assets.ts';
+import { productionMangleOptions } from './scripts/minification-policy.mjs';
 
 const projectDir = dirname(fileURLToPath(import.meta.url));
 const distDir = resolve(projectDir, 'dist');
@@ -55,7 +48,12 @@ const isAnalyze = process.argv.includes('--analyze');
 const emitSourceMap = process.argv.includes('--sourcemap');
 
 const entries = [
-	{ entry: 'src/background/index.ts', out: 'background.js' },
+	{
+		entry: 'src/background/index.ts',
+		out: 'background.js',
+		format: 'esm',
+		sharingDomain: 'background-service-worker',
+	},
 	{
 		entry: 'src/content/core/bootstrap.ts',
 		out: 'content-bootstrap.js',
@@ -99,7 +97,15 @@ const vendorEntries = [
 const allEntries = [...vendorEntries, ...entries];
 
 const isolatedEntries = entries.filter(({ out }) => out.startsWith('content-'));
-const moduleEntries = entries.filter(({ out }) => !out.startsWith('content-'));
+const backgroundEntries = entries.filter(
+	({ sharingDomain }) => sharingDomain === 'background-service-worker',
+);
+const moduleEntries = entries.filter(
+	({ out, sharingDomain }) => (
+		!out.startsWith('content-')
+		&& sharingDomain !== 'background-service-worker'
+	),
+);
 const moduleEntryGroups = [
 	{
 		name: 'extension',
@@ -215,7 +221,12 @@ function runTypecheck() {
 }
 
 function prepareDist() {
-	rmSync(distDir, { recursive: true, force: true });
+	rmSync(distDir, {
+		recursive: true,
+		force: true,
+		maxRetries: 5,
+		retryDelay: 100,
+	});
 	mkdirSync(distDir, { recursive: true });
 	cpSync(publicDir, distDir, { recursive: true });
 
@@ -321,135 +332,21 @@ async function optimizeProductionIcons() {
 	}
 }
 
-function collectReservedProperties(paths) {
-	const reserved = new Set([
-		// Chrome extension APIs are not part of Terser's built-in DOM property set.
-		'addListener', 'removeListener', 'hasListener', 'lastError', 'sendMessage',
-		'connect', 'disconnect', 'postMessage', 'onMessage', 'onConnect', 'onDisconnect',
-		'id', 'url', 'title', 'windowId', 'index', 'active', 'audible', 'mutedInfo',
-		'muted', 'pinned', 'status', 'state', 'incognito', 'openerTabId', 'documentId',
-		'frameId', 'error', 'result',
-		// Chrome API dictionaries are externally interpreted records. Their keys
-		// are not ordinary JavaScript implementation properties and must survive
-		// property mangling even when a specific key is used only in an object
-		// literal rather than a chrome.* member chain.
-		'target', 'documentIds', 'frameIds', 'allFrames', 'world', 'func', 'args',
-		'files', 'injectImmediately', 'matches', 'excludeMatches', 'runAt',
-		'persistAcrossSessions', 'cssOrigin', 'reasons', 'justification', 'messaging',
-		'filename', 'saveAs', 'conflictAction', 'format', 'quality', 'text', 'color',
-		// PeerJS is a runtime library with public methods and browser-owned objects.
-		'on', 'off', 'send', 'close', 'open', 'peer', 'destroy', 'reconnect',
-		'disconnected', 'destroyed',
-		// Versioned content globals are a cross-injection ABI used by runtime
-		// handoff and release smoke. Their deliberately small public projection
-		// must keep the same names across independently minified artifacts.
-		'bootstrapRevision', 'context', 'dispose', 'disposed', 'isReady',
-		'revision', 'runtime', 'sources',
-	]);
-	const addStringProperties = (source, path = 'bundle.js') => {
-		for (const property of collectRuntimeStringProperties(source, path)) reserved.add(property);
-		for (const match of source.matchAll(/\bchrome((?:\??\.[A-Za-z_$][\w$]*)+)/gu)) {
-			for (const property of match[1].split(/\??\./u)) {
-				if (property) reserved.add(property);
-			}
-		}
-	};
-	const addEsmExportProperties = (source) => {
-		// Terser processes each emitted file independently. A dynamic import reads
-		// the export name as a module-namespace property in the caller, while the
-		// provider exposes it as syntax rather than a property. Reserve both sides
-		// from every emitted export list so code-split chunks cannot disagree.
-		for (const match of source.matchAll(/\bexport\s*\{([^}]*)\}/gu)) {
-			for (const rawSpecifier of match[1].split(',')) {
-				const specifier = rawSpecifier.trim();
-				if (!specifier) continue;
-				const parts = specifier.split(/\s+as\s+/u);
-				const exportedName = (parts[1] ?? parts[0]).trim();
-				if (/^[A-Za-z_$][\w$]*$/u.test(exportedName)) reserved.add(exportedName);
-			}
-		}
-	};
-	const addCrossContextSingletonProperties = (source) => {
-		// Versioned globals are an explicit handoff ABI between separately injected
-		// scripts and test/upgrade probes. They are intentionally readable outside
-		// the bundle that defines them.
-		for (const match of source.matchAll(/\.(__[A-Za-z_$][\w$]*)/gu)) {
-			if (match[1]) reserved.add(match[1]);
-		}
-	};
-	for (const path of paths) {
-		const source = readFileSync(path, 'utf8');
-		addStringProperties(source, path);
-		addEsmExportProperties(source);
-		addCrossContextSingletonProperties(source);
-		for (const property of collectExternalBoundaryProperties(source, path)) {
-			reserved.add(property);
-		}
-		for (const match of source.matchAll(/\bchrome((?:\??\.[A-Za-z_$][\w$]*)+)/gu)) {
-			for (const property of match[1].split(/\??\./u)) {
-				if (property) reserved.add(property);
-			}
-		}
-	}
-	// Browser-loaded JSON is an external property namespace. This includes
-	// Manifest command identifiers such as `toggle_mute`, which Chromium passes
-	// back as strings and therefore cannot follow a Terser-renamed object key.
-	for (const path of walkFiles(distDir).filter((entry) => entry.endsWith('.json')).sort()) {
-		let value;
-		try { value = JSON.parse(readFileSync(path, 'utf8')); } catch { continue; }
-		for (const property of collectExternalJsonProperties(value)) reserved.add(property);
-	}
-	for (const property of collectLocaleCatalogPropertyNames()) reserved.add(property);
-	const contractsDir = resolve(projectDir, '../../packages/contracts/src');
-	for (const path of walkFiles(contractsDir).filter((entry) => entry.endsWith('.ts')).sort()) {
-		addStringProperties(readFileSync(path, 'utf8'), path);
-	}
-
-	// Remote control messages cross into a separately deployed bundle. Reserve
-	// every property that bundle reads directly in addition to quoted wire keys.
-	const remoteSite = resolve(projectDir, '../../../remote-site/app.js');
-	if (existsSync(remoteSite)) {
-		const source = readFileSync(remoteSite, 'utf8');
-		addStringProperties(source, remoteSite);
-		for (const property of collectExternalBoundaryProperties(source, remoteSite)) {
-			reserved.add(property);
-		}
-		for (const match of source.matchAll(/\.([A-Za-z_$][\w$]*)/gu)) {
-			if (match[1]) reserved.add(match[1]);
-		}
-	}
-	return [...reserved].sort();
-}
-
 async function minifyProductionJavaScript() {
 	if (isDev || emitSourceMap) return;
 	const paths = walkFiles(distDir).filter((path) => path.endsWith('.js')).sort();
-	const reserved = collectReservedProperties(paths);
-	const nameCache = {};
 	for (const path of paths) {
-		const source = readFileSync(path, 'utf8');
 		const opaqueVendor = path.endsWith('peerjs-vendor.js');
+		if (!opaqueVendor) continue;
+		const source = readFileSync(path, 'utf8');
 		const result = await minify(source, {
 			ecma: 2022,
 			module: /^\s*(?:import|export)\b/mu.test(source),
 			compress: {
 				passes: 4,
 			},
-			mangle: {
-				toplevel: true,
-				properties: opaqueVendor ? {
-					// PeerJS marks implementation-only members with `_`; its public,
-					// signaling and WebRTC property names remain byte-for-byte stable.
-					regex: /^_/u,
-					keep_quoted: true,
-				} : {
-					builtins: false,
-					keep_quoted: true,
-					reserved,
-				},
-			},
+			mangle: productionMangleOptions(true),
 			format: { comments: false },
-			nameCache,
 		});
 		if (typeof result.code !== 'string') throw new Error(`Terser emitted no code for ${path}`);
 		writeFileSync(path, result.code);
@@ -579,6 +476,11 @@ if (isWatch) {
 	} else {
 		for (const entry of vendorEntries) await buildOne(entry);
 		for (const entry of isolatedEntries) await buildOne(entry);
+		// The MV3 worker owns durable control recovery and contains a deliberate
+		// runtime-loader/control-coordinator cycle. Keep it one self-contained
+		// module so worker startup never depends on a separately initialized
+		// shared chunk. Extension pages may still share deterministic chunks.
+		for (const entry of backgroundEntries) await buildOne(entry);
 		for (const group of moduleEntryGroups) {
 			const moduleEntryPoints = Object.fromEntries(group.entries.map(({ entry, out }) => [
 				out.slice(0, -'.js'.length),

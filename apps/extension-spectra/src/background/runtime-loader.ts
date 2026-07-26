@@ -28,6 +28,7 @@ import { injectMainBridges } from './main-runtime-manager';
 import { settingsRepository } from './settings-repository';
 import { storage } from './state';
 import { markBadgeUsedForTab } from './handlers/badge';
+import { ensureCaptureStatesReconciled } from './handlers/capture';
 
 // Heavy SPA startup can legitimately spend several seconds restoring settings
 // and discovering media before the runtime publishes READY. Keep the handshake
@@ -430,6 +431,11 @@ export async function ensureContentRuntime(
 	reason: ContentRuntimeLeaseReason,
 	capability: string,
 ): Promise<ContentRuntimeReadyResult> {
+	// A restarted worker must reconcile the surviving offscreen Capture owner
+	// before Content hydrates or reuses READY. Otherwise a remote/hotkey/restore
+	// intent can observe a temporary bypass and misclassify an update to the
+	// existing processor as a forbidden new Capture request.
+	await ensureCaptureStatesReconciled();
 	const currentDocumentId = await resolveDocumentId(tabId, documentId);
 	const key = runtimeKey(tabId, currentDocumentId);
 	acquireRuntimeLease(key, reason, capability);
@@ -447,23 +453,25 @@ export async function ensureContentRuntime(
 
 async function restoreIfConfigured(tabId: number, documentId: string, url: string | undefined): Promise<void> {
 	if (!url) return;
-	let hostname = '';
-	let origin = '';
+	let identity: ReturnType<typeof storage.tabSession.identity>;
 	try {
-		const parsed = new URL(url);
-		hostname = parsed.hostname;
-		origin = parsed.origin;
+		identity = storage.tabSession.identity(tabId, documentId, url);
 	} catch { return; }
-	if (origin === 'null') return;
-	const restore = await resolveDocumentRestorePlan(tabId, documentId, hostname, origin);
+	const hostname = new URL(identity.resourceUrl).hostname;
+	const restore = await resolveDocumentRestorePlan(
+		tabId,
+		documentId,
+		identity.resourceUrl,
+	);
 	if (Object.keys(restore.patch).length === 0) return;
-	// Replaying a same-origin tab session must preserve its existing usage fact:
+	// Replaying an exact-resource tab session must preserve its existing usage fact:
 	// native-only page interaction stays badge-free, while an earlier SPECTRA
 	// action is already sticky in badge-usage storage. A configured site/global
 	// preset is itself active extension behavior and therefore starts usage.
 	if (restore.source === 'preset') await markBadgeUsedForTab(tabId);
 	const capability = `settings:${hostname}`;
 	await ensureContentRuntime(tabId, documentId, 'restore', capability);
+	let retained = false;
 	try {
 		const { submitControlRequest } = await import('./control-coordinator');
 		for (const group of splitDocumentRestorePatch(restore.patch)) {
@@ -475,8 +483,14 @@ async function restoreIfConfigured(tabId: number, documentId: string, url: strin
 				patch: group.patch,
 			});
 		}
+		// A non-empty document restore is a live desired-state owner, not a
+		// one-shot write. Retain the event-driven runtime so media created later
+		// by an SPA can consume the same revision on registration/metadata/play.
+		retained = true;
 	} finally {
-		releaseContentRuntimeLease(tabId, documentId, 'restore', capability);
+		if (!retained) {
+			releaseContentRuntimeLease(tabId, documentId, 'restore', capability);
+		}
 	}
 }
 
@@ -725,13 +739,15 @@ function splitDocumentRestorePatch(patch: ControlSessionPatch): Array<{
 async function resolveDocumentRestorePlan(
 	tabId: number,
 	documentId: string,
-	hostname: string,
-	origin: string,
+	resourceUrl: string,
 ): Promise<{ patch: ControlSessionPatch; source: 'session' | 'preset' }> {
-	const sessionPatch = await storage.tabSession.rebind(tabId, { tabId, documentId, origin });
+	const identity = storage.tabSession.identity(tabId, documentId, resourceUrl);
+	const sessionPatch = await storage.tabSession.rebind(tabId, identity);
 	if (sessionPatch) return { patch: sessionPatch, source: 'session' };
 	return {
-		patch: presetRestorePatch(await settingsRepository.resolveAudioConfig(hostname)),
+		patch: presetRestorePatch(await settingsRepository.resolveAudioConfig(
+			new URL(identity.resourceUrl).hostname,
+		)),
 		source: 'preset',
 	};
 }

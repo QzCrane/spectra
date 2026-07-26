@@ -45,7 +45,8 @@ export {
   audioSessionMatchesIdentity,
   audioSessionMatchesControlDocument,
   isActiveCaptureLifecycle,
-  resolveAudioVolumeState
+  resolveAudioVolumeState,
+  crossesAudioVolumeProcessorBoundary
 } from './audio.contracts.js';
 
 // Per-field SPECTRA control contracts
@@ -101,6 +102,7 @@ export type {
 	ControlError,
 	ControlFieldState,
 	ControlFieldStates,
+	ControlAudioVolumeProjection,
 	ControlIntent,
 	ControlSubmitRequest,
 	ControlMutationOperation,
@@ -125,8 +127,9 @@ export {
 	CONTROL_ALGORITHM_ADJUDICATIONS,
 	compileEffectiveVolume,
 	splitEffectiveVolume,
-	// @deprecated: use splitEffectiveVolume; kept for spectra control-contracts.spec.ts
-	splitLegacyVolume,
+	resolveAcknowledgedProcessorLifecycle,
+	resolveAcknowledgedAudioVolumeState,
+	resolveControlAudioVolume,
 	classifyControlStrategy,
 	isControlStrategyAdmittedForCapability,
 	isControlStrategyFailure,
@@ -201,7 +204,6 @@ export type {
 	ScreenshotResult,
 	SpectraRequestMap,
 	SpectraEventMap,
-	SpectraHotkeyActualFeedback,
 	SpectraRequestType,
 	SpectraEventType,
 	SpectraRequestPayload,
@@ -215,7 +217,6 @@ export type {
 export {
 	SPECTRA_PROTOCOL_VERSION,
 	SPECTRA_CONTENT_BOOTSTRAP_REVISION,
-	SPECTRA_CONTENT_RUNTIME_REVISION,
 	isRpcError,
 	isSpectraRequestEnvelope,
 	isSpectraEventEnvelope,
@@ -223,6 +224,19 @@ export {
 	rpcSuccess,
 	rpcFailure,
 } from './spectra.protocol.js';
+export {
+	SPECTRA_CONTENT_RUNTIME_REVISION,
+	SPECTRA_DEFAULT_HOTKEY_ACTION_BY_CODE,
+	SPECTRA_DEFAULT_HOTKEY_ACTIONS,
+	isSpectraDefaultHotkeyTriggerPayload,
+	resolveSpectraDefaultHotkeyAction,
+} from './spectra.bootstrap.js';
+export type {
+	SpectraDefaultHotkeyAction,
+	SpectraDefaultHotkeyChord,
+	SpectraDefaultHotkeyPhase,
+	SpectraDefaultHotkeyTriggerPayload,
+} from './spectra.bootstrap.js';
 
 // Canonical domain utilities
 export {
@@ -315,6 +329,7 @@ export type {
 	HotkeyRepeatPolicy,
 	HotkeyParameterKind,
 	HotkeyActionDescriptor,
+	SpectraHotkeyActualFeedback,
   KeyModifiers,
   KeyCombo,
   HotkeyBinding,
@@ -329,11 +344,11 @@ export {
   HOTKEY_ACTIONS,
 	HOTKEY_ACTION_DESCRIPTORS,
 	isHotkeyParamsForAction,
+	isSpectraDefaultHotkeyKeyCombo,
 	isSlotHotkeyAction,
-  DEFAULT_MODIFIERS,
-  DEFAULT_HOTKEY_SETTINGS,
-  DEFAULT_SLOTS,
-  PRESET_BINDINGS
+	resolveSpectraHotkeyActualFeedback,
+	DEFAULT_MODIFIERS,
+  DEFAULT_HOTKEY_SETTINGS
 } from './hotkeys.contracts.js';
 
 // Message Action constants

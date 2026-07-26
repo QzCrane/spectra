@@ -52,20 +52,6 @@ export function createLocaleCatalogs(): Record<string, EncodedLocaleCatalog> {
 	return catalogs;
 }
 
-// Production property mangling must preserve every key read from the generated
-// gzip catalogs. Derive the boundary from the complete catalog instead of
-// maintaining a second hand-written list that can drift when i18n grows.
-export function collectLocaleCatalogPropertyNames(): Set<string> {
-	const names = new Set<string>();
-	for (const catalog of Object.values(createLocaleCatalogs())) {
-		for (const [section, values] of Object.entries(catalog)) {
-			names.add(section);
-			for (const key of Object.keys(values)) names.add(key);
-		}
-	}
-	return names;
-}
-
 // English is the on-disk fallback baseline. Other locale assets only need the
 // values that differ from it; the runtime rehydrates the complete schema after
 // validating both files. This avoids storing the same fallback strings nine times.

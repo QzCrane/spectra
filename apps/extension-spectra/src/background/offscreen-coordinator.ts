@@ -23,16 +23,21 @@ const RECONCILE_RETRY_DELAYS_MS = [25, 75] as const;
 const localLeases = new Set<OffscreenLeaseKey>();
 const recoveredLeases = new Set<OffscreenLeaseKey>();
 // A live document whose HELLO failed may still own processors or remote secrets.
-// Treat that unknown host as an implicit lease until a later handshake or a
-// confirmed document disappearance establishes authoritative state.
+// Unknown state is a bounded reconciliation quarantine, not durable ownership:
+// known leases retain the host, while an unowned host receives an idle grace
+// period and one final authoritative HELLO before stale-document reclamation.
 let hostStateUnknown = false;
 
 let closeTimer: ReturnType<typeof setTimeout> | null = null;
 let lifecycleTail: Promise<void> = Promise.resolve();
 let alarmListenerRegistered = false;
 
+function hasKnownLease(): boolean {
+	return localLeases.size > 0 || recoveredLeases.size > 0;
+}
+
 function hasAnyLease(): boolean {
-	return localLeases.size > 0 || recoveredLeases.size > 0 || hostStateUnknown;
+	return hasKnownLease() || hostStateUnknown;
 }
 
 function withLifecycleLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -115,7 +120,28 @@ async function closeIfIdle(): Promise<void> {
 	await withLifecycleLock(async () => {
 		if (hasAnyLease() || !(await hasOffscreenDocument()) || hasAnyLease()) return;
 		try {
+			const snapshot = await dispatchOffscreenMessage({ type: 'OFFSCREEN_HOST_HELLO' });
+			replaceRecoveredLeases(snapshot);
+			hostStateUnknown = false;
+			if (hasKnownLease()) {
+				swLog.info('Idle close retained resources recovered by the final offscreen HELLO');
+				return;
+			}
+		} catch (error) {
+			if (hasKnownLease()) {
+				hostStateUnknown = true;
+				swLog.warn('Final offscreen HELLO failed while known leases remain; retaining host', error);
+				return;
+			}
+			swLog.warn('Final offscreen HELLO failed without known leases; reclaiming stale host', error);
+		}
+		// A lease can be acquired while the final HELLO is in flight, before its
+		// owner enters the lifecycle mutex. Never close across that ownership edge.
+		if (hasAnyLease()) return;
+		try {
 			await chrome.offscreen.closeDocument();
+			recoveredLeases.clear();
+			hostStateUnknown = false;
 			swLog.debug('Unified offscreen host closed after idle grace period');
 		} catch (error) {
 			swLog.warn('Unable to close idle offscreen host', error);
@@ -124,7 +150,11 @@ async function closeIfIdle(): Promise<void> {
 }
 
 function scheduleIdleClose(): void {
-	if (hasAnyLease() || closeTimer) return;
+	if (hasKnownLease()) return;
+	// Reconciliation uncertainty must converge once no explicit owner remains.
+	// The grace alarm and close-time HELLO preserve a final recovery opportunity.
+	hostStateUnknown = false;
+	if (closeTimer) return;
 	if (chrome.alarms?.create) {
 		chrome.alarms.create(IDLE_CLOSE_ALARM, { delayInMinutes: IDLE_CLOSE_MS / 60_000 });
 		return;
@@ -201,51 +231,57 @@ export async function sendOffscreenMessageIfPresent<TRequest extends OffscreenHo
 	});
 }
 
-export async function reconcileOffscreenHost(): Promise<OffscreenHostSnapshot> {
+function replaceRecoveredLeases(snapshot: OffscreenHostSnapshot): void {
+	const hostLeases = new Set<OffscreenLeaseKey>();
+	for (const audio of snapshot.audioTabs) hostLeases.add(`audio:${audio.tabId}`);
+	for (const remote of snapshot.remoteTabs) hostLeases.add(`remote:${remote.sessionId}`);
+	recoveredLeases.clear();
+	for (const key of hostLeases) recoveredLeases.add(key);
+}
+
+export function reconcileOffscreenHost(): Promise<OffscreenHostSnapshot> {
 	initializeOffscreenCoordinator();
-	await retireLegacyOffscreenDocument();
-	let lastError: unknown;
-	for (let attempt = 0; attempt <= RECONCILE_RETRY_DELAYS_MS.length; attempt += 1) {
-		if (!(await hasOffscreenDocument())) {
-			// An absent document is the only case where an empty host can be inferred
-			// without a HELLO response. A live-but-unresponsive host remains unknown.
-			recoveredLeases.clear();
-			hostStateUnknown = false;
-			scheduleIdleClose();
-			return { audioTabs: [], remoteTabs: [] };
-		}
-		hostStateUnknown = true;
-		await cancelIdleClose();
-
-		try {
-			const snapshot = await dispatchOffscreenMessage({ type: 'OFFSCREEN_HOST_HELLO' });
-
-			const hostLeases = new Set<OffscreenLeaseKey>();
-			for (const audio of snapshot.audioTabs) hostLeases.add(`audio:${audio.tabId}`);
-			for (const remote of snapshot.remoteTabs) hostLeases.add(`remote:${remote.sessionId}`);
-			recoveredLeases.clear();
-			for (const key of hostLeases) recoveredLeases.add(key);
-			hostStateUnknown = false;
-			if (hasAnyLease()) await cancelIdleClose();
-			else scheduleIdleClose();
-			return snapshot;
-		} catch (error) {
-			lastError = error;
-			// The host may have disappeared while HELLO was in flight. Re-checking
-			// distinguishes confirmed teardown from a live host whose state is unknown.
+	return withLifecycleLock(async () => {
+		await retireLegacyOffscreenDocumentUnlocked();
+		let lastError: unknown;
+		for (let attempt = 0; attempt <= RECONCILE_RETRY_DELAYS_MS.length; attempt += 1) {
 			if (!(await hasOffscreenDocument())) {
+				// An absent document is the only case where an empty host can be inferred
+				// without a HELLO response.
 				recoveredLeases.clear();
 				hostStateUnknown = false;
 				scheduleIdleClose();
 				return { audioTabs: [], remoteTabs: [] };
 			}
-			const retryDelay = RECONCILE_RETRY_DELAYS_MS[attempt];
-			if (retryDelay !== undefined) await delay(retryDelay);
-		}
-	}
+			hostStateUnknown = true;
+			await cancelIdleClose();
 
-	const detail = lastError instanceof Error ? lastError.message : String(lastError);
-	throw new Error(`Unable to reconcile the live offscreen host: ${detail}`, { cause: lastError });
+			try {
+				const snapshot = await dispatchOffscreenMessage({ type: 'OFFSCREEN_HOST_HELLO' });
+				replaceRecoveredLeases(snapshot);
+				hostStateUnknown = false;
+				if (hasAnyLease()) await cancelIdleClose();
+				else scheduleIdleClose();
+				return snapshot;
+			} catch (error) {
+				lastError = error;
+				// The host may have disappeared while HELLO was in flight. Re-checking
+				// distinguishes confirmed teardown from a live host whose state is unknown.
+				if (!(await hasOffscreenDocument())) {
+					recoveredLeases.clear();
+					hostStateUnknown = false;
+					scheduleIdleClose();
+					return { audioTabs: [], remoteTabs: [] };
+				}
+				const retryDelay = RECONCILE_RETRY_DELAYS_MS[attempt];
+				if (retryDelay !== undefined) await delay(retryDelay);
+			}
+		}
+
+		if (!hasKnownLease()) scheduleIdleClose();
+		const detail = lastError instanceof Error ? lastError.message : String(lastError);
+		throw new Error(`Unable to reconcile the live offscreen host: ${detail}`, { cause: lastError });
+	});
 }
 
 function delay(milliseconds: number): Promise<void> {

@@ -5,6 +5,7 @@ import { isAudioConfigPatch, type AudioConfig } from './audio.contracts.js';
 import {
 	HOTKEY_ACTIONS,
 	isHotkeyParamsForAction,
+	isSpectraDefaultHotkeyKeyCombo,
 	isSlotHotkeyAction,
 	type HotkeyAction,
 	type HotkeyBinding,
@@ -245,7 +246,7 @@ function isHotkeyConditions(value: unknown): value is HotkeyConditions {
 			&& value.domains.every((domain) => typeof domain === 'string' && normalizeHostname(domain) !== null));
 }
 
-function isHotkeyBinding(value: unknown): value is HotkeyBinding {
+function isHotkeyBindingShape(value: unknown): value is HotkeyBinding {
 	if (!isRecord(value) || !hasOnlyKeys(value, HOTKEY_BINDING_KEYS)) return false;
 	if (typeof value.id !== 'string' || value.id.length === 0 || value.id.length > 128) return false;
 	if (typeof value.enabled !== 'boolean' || typeof value.action !== 'string' || !HOTKEY_ACTION_SET.has(value.action)) return false;
@@ -253,7 +254,26 @@ function isHotkeyBinding(value: unknown): value is HotkeyBinding {
 	const action = value.action as HotkeyAction;
 	if (!isHotkeyParamsForAction(action, value.params)) return false;
 	if (value.conditions !== undefined && !isHotkeyConditions(value.conditions)) return false;
-	return value.disabledReason === undefined || value.disabledReason === 'unsupported_action';
+	return value.disabledReason === undefined
+		|| value.disabledReason === 'unsupported_action'
+		|| value.disabledReason === 'reserved_default_chord';
+}
+
+// Persisted snapshots may retain an old site binding on a built-in chord only
+// as explicit disabled migration evidence. A reserved reason on any other
+// chord is stale and therefore not a valid projection.
+function isHotkeyBinding(value: unknown): value is HotkeyBinding {
+	if (!isHotkeyBindingShape(value)) return false;
+	if (isSpectraDefaultHotkeyKeyCombo(value.key)) {
+		return !value.enabled && value.disabledReason === 'reserved_default_chord';
+	}
+	return value.disabledReason !== 'reserved_default_chord';
+}
+
+function isUpsertHotkeyBinding(value: unknown): value is HotkeyBinding {
+	return isHotkeyBindingShape(value)
+		&& !isSpectraDefaultHotkeyKeyCombo(value.key)
+		&& value.disabledReason !== 'reserved_default_chord';
 }
 
 function isHotkeyBindingId(value: unknown): value is string {
@@ -275,7 +295,7 @@ function isHotkeySiteMutation(value: unknown): value is HotkeySiteMutation {
 	}
 	if (value.type === 'upsert-binding') {
 		return hasOnlyKeys(value, HOTKEY_SITE_UPSERT_MUTATION_KEYS)
-			&& isHotkeyBinding(value.binding);
+			&& isUpsertHotkeyBinding(value.binding);
 	}
 	if (value.type === 'remove-binding') {
 		return hasOnlyKeys(value, HOTKEY_SITE_REMOVE_MUTATION_KEYS)

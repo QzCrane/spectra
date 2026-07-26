@@ -18,8 +18,9 @@ export class StorageRepository {
     set: restrictedRegistry.setRegistry,
   };
 
-  // Acknowledged control session (persists across same-origin refresh, isolated per tab)
+  // Acknowledged control session (resource observations + origin-portable intent, isolated per tab)
   tabSession = {
+	identity: tabSessionModule.createTabControlSessionIdentity,
     get: tabSessionModule.getTabControlSession,
     merge: tabSessionModule.mergeTabControlSession,
 	rebind: tabSessionModule.rebindTabControlSession,

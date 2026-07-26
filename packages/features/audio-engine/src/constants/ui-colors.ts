@@ -5,8 +5,6 @@ export const UIColors = {
 	CAPTURE: '#7c3aed',
 	// NATIVE: blue for native, Media WebAudio and every non-active transition
 	NATIVE: '#2563eb',
-	// PENDING: an explicit desired/actual boundary; never predicts Capture.
-	PENDING: '#f59e0b',
 	MUTED: '#9ca3af',
 	WHITE: '#ffffff',
 } as const;

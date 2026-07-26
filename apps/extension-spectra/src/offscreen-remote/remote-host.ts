@@ -155,11 +155,6 @@ export function createRemoteHostController(
 	}
 
 	function acceptConnection(session: HostSession, connection: DataConnection): void {
-		if (session.authenticated && session.connection?.open) {
-			connection.on('open', () => rejectConnection(connection, session.pairing.sessionId, 'ALREADY_CONNECTED'));
-			return;
-		}
-
 		const nonce = generateRandomToken(32);
 		let authenticated = false;
 		let authenticating = false;
@@ -168,6 +163,10 @@ export function createRemoteHostController(
 		}, REMOTE_AUTH_TIMEOUT_MS);
 
 		connection.on('open', () => {
+			if (session.authenticated && session.connection?.open && session.connection !== connection) {
+				rejectConnection(connection, session.pairing.sessionId, 'ALREADY_CONNECTED');
+				return;
+			}
 			if (!canAuthenticate(session)) {
 				rejectConnection(connection, session.pairing.sessionId, 'EXPIRED');
 				return;

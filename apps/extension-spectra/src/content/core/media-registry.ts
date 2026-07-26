@@ -65,6 +65,17 @@ function preloadCorsEvidence(
 	return { kind: 'preload-cors', resourceUrl };
 }
 
+function initialVisibleArea(element: HTMLMediaElement): number {
+	const rect = element.getBoundingClientRect();
+	if (rect.width <= 0 || rect.height <= 0) return 0;
+	if (typeof window === 'undefined') return rect.width * rect.height;
+	const left = Math.max(0, rect.left);
+	const top = Math.max(0, rect.top);
+	const right = Math.min(window.innerWidth, rect.right);
+	const bottom = Math.min(window.innerHeight, rect.bottom);
+	return Math.max(0, right - left) * Math.max(0, bottom - top);
+}
+
 let activeMediaRegistry: MediaRegistry | null = null;
 
 export function setActiveMediaRegistry(registry: MediaRegistry | null): () => void {
@@ -220,7 +231,11 @@ export class MediaRegistry {
 			registrationOrder: this.order++,
 			lastInteraction: 0,
 			lastPlay: 0,
-			visibleArea: 0,
+			// IntersectionObserver is asynchronous. Seed the first selection from
+			// current geometry so a restore that immediately follows runtime
+			// acquisition cannot choose an earlier hidden/preloaded SPA source
+			// before the observer delivers its initial entries.
+			visibleArea: initialVisibleArea(element),
 			dispose: () => undefined,
 		};
 		const listeners: Array<[MediaRegistryEvent, EventListener]> = [];

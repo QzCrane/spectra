@@ -5,6 +5,7 @@ export {
 	audioConfigPatchToControlSessionPatch,
 	audioConfigToControlSessionPatch,
 	controlSessionPatchToAudioConfig,
+	createTabControlSessionIdentity,
 	getTabControlSession,
 	mergeTabControlSession,
 	rebindTabControlSession,
@@ -12,6 +13,7 @@ export {
 	flushTabControlSession,
 	hasTabControlSession,
 } from './tab-session.js';
+export type { TabControlSessionIdentity, TabControlSessionScope } from './tab-session.js';
 export { safeStorageGet, safeStorageSet, safeStorageRemove } from './safe-storage.js';
 export type { StorageArea } from './safe-storage.js';
 export { createSerializedQueue, createKeyedSerializedQueue } from './serialized-queue.js';

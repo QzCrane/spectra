@@ -41,9 +41,20 @@ import {
 
 const sessionIdentityFromSender = identityFromSender;
 
+function controlSessionIdentityFromSender(sender: chrome.runtime.MessageSender) {
+	const identity = sessionIdentityFromSender(sender);
+	const resourceUrl = sender.url ?? sender.tab?.url;
+	if (!identity || !resourceUrl) return null;
+	try {
+		return storage.tabSession.identity(identity.tabId, identity.documentId, resourceUrl);
+	} catch {
+		return null;
+	}
+}
+
 async function resolveAudioConfigForSender(sender: chrome.runtime.MessageSender): Promise<AudioConfig> {
 	const tabId = sender.tab?.id;
-	const identity = sessionIdentityFromSender(sender);
+	const identity = controlSessionIdentityFromSender(sender);
 	const domain = normalizeHostname(sender.url ?? sender.tab?.url ?? '') ?? '';
 	let config: AudioConfig | null = null;
 	if (tabId && identity) {
@@ -368,7 +379,7 @@ export function registerAudioV2Listener(): void {
 				return resolveAudioConfigForSender(sender);
 			}
 			if (message.type === 'spectra.audio.config.set') {
-				const identity = sessionIdentityFromSender(sender);
+				const identity = controlSessionIdentityFromSender(sender);
 				if (!identity) throw new Error('Audio configuration requires a document identity');
 				await storage.tabSession.merge(
 					identity.tabId,
@@ -473,7 +484,7 @@ export function registerAudioHandlers(): void {
 	// eff: syncs config to tab session only (not domain preset)
 	router.on(Actions.AUDIO_SET_CONFIG, async (req, sender) => {
 		const tabId = sender.tab?.id;
-		const identity = sessionIdentityFromSender(sender);
+		const identity = controlSessionIdentityFromSender(sender);
 		if (!tabId || !identity) return { success: false };
 
 		if (req.config) {

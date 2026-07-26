@@ -4,7 +4,7 @@ import { isHotkeyParamsForAction, type HotkeyAction, type HotkeyParams } from '@
 import { createLogger } from '../../shared/logger';
 import { showToast } from '../ui/toast';
 import {
-	sendVolumeAction, sendSpeedAction, sendAudioAdjustment, toggleLoop, sendTabAction,
+	sendVolumeAction, sendSpeedAction, sendAudioAdjustment,
 	submitHotkeyMutations, submitHotkeyOperation, submitTrustedActivationControl,
 } from './hotkey-helpers';
 
@@ -89,11 +89,11 @@ export const HOTKEY_ACTION_HANDLERS = {
 		const ack = await submitHotkeyOperation('ab-skip', {});
 		showToast(ack.result.skipped ? 'Skipped A/B segment' : 'Set A and B first');
 	},
-	loop_toggle: async () => { await toggleLoop(); },
+	loop_toggle: () => submitHotkeyMutations([{ field: 'loop', operation: 'toggle' }]),
 	fx_toggle: () => submitHotkeyOperation('video-effects-toggle', {}),
 	fx_reset: () => submitHotkeyOperation('video-effects-reset', {}),
-	tab_pin: async () => { await sendTabAction('tab_pin'); },
-	tab_mute: async () => { await sendTabAction('tab_mute'); },
+	tab_pin: () => submitHotkeyMutations([{ field: 'tabPinned', operation: 'toggle' }]),
+	tab_mute: () => submitHotkeyMutations([{ field: 'tabMuted', operation: 'toggle' }]),
 	show_info: () => submitHotkeyOperation('show-info', {}),
 	open_popup: () => submitHotkeyOperation('open-popup', {}),
 	open_options: () => submitHotkeyOperation('open-options', {}),
@@ -101,15 +101,11 @@ export const HOTKEY_ACTION_HANDLERS = {
 	open_url: openUrl,
 } satisfies Record<HotkeyAction, HotkeyHandler>;
 
-export const HANDLED_HOTKEY_ACTIONS: ReadonlySet<HotkeyAction> = new Set(
-	Object.keys(HOTKEY_ACTION_HANDLERS) as HotkeyAction[],
-);
-
 // eff: executes the requested action through the exhaustive, testable registry
-export async function executeHotkeyAction(action: HotkeyAction, params?: HotkeyParams): Promise<void> {
+export async function executeHotkeyAction(action: HotkeyAction, params?: HotkeyParams): Promise<unknown> {
 	log.debug(`Executing action: ${action}`, params);
 	if (!isHotkeyParamsForAction(action, params)) {
 		throw new Error(`Invalid parameters for hotkey action ${action}`);
 	}
-	await HOTKEY_ACTION_HANDLERS[action](params);
+	return HOTKEY_ACTION_HANDLERS[action](params);
 }

@@ -83,6 +83,20 @@ function booleanValue(value: unknown, label: string): boolean {
 	return value;
 }
 
+function playbackRatePropertyReader(target: object): (() => number) | null {
+	const descriptor = propertyDescriptor(target, 'playbackRate');
+	if (!descriptor
+		|| (!descriptor.get && (!('value' in descriptor) || typeof descriptor.value !== 'number'))) {
+		return null;
+	}
+	return () => finiteNumber(
+		Reflect.get(target, 'playbackRate'),
+		0.1,
+		16,
+		'Page playback rate',
+	);
+}
+
 function capabilityFor(
 	controller: object,
 	field: SpectraPageMediaField,
@@ -121,10 +135,15 @@ function capabilityFor(
 		} : null;
 	}
 	const getPlaybackRate = boundMethod(controller, 'getPlaybackRate');
-	const setPlaybackRate = boundMethod(controller, 'setPlaybackRate');
-	if (getPlaybackRate && setPlaybackRate) {
+	const readPlaybackRate = getPlaybackRate
+		? () => finiteNumber(getPlaybackRate(), 0.1, 16, 'Page playback rate')
+		: playbackRatePropertyReader(controller);
+	const setPlaybackRate = boundMethod(controller, 'setPlaybackRate')
+		?? boundMethod(controller, 'setPlaybackRateByUser')
+		?? boundMethod(controller, 'changePlaybackRate');
+	if (readPlaybackRate && setPlaybackRate) {
 		return {
-			read: () => finiteNumber(getPlaybackRate(), 0.1, 16, 'Page playback rate'),
+			read: readPlaybackRate,
 			write: (value) => {
 				setPlaybackRate(finiteNumber(value, 0.1, 16, 'Requested playback rate'));
 			},

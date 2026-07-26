@@ -1,5 +1,6 @@
 // goal: translate content hotkeys into canonical coordinator mutations
 import type {
+	ControlApplyAck,
 	ControlMutation,
 	ControlOperation,
 	ControlOperationAck,
@@ -39,11 +40,14 @@ export async function submitTrustedActivationControl(
 	return result;
 }
 
-export async function submitHotkeyMutations(mutations: readonly ControlMutation[]): Promise<void> {
+export async function submitHotkeyMutations(
+	mutations: readonly ControlMutation[],
+): Promise<ControlApplyAck | undefined> {
 	const target = mutations.filter((mutation) =>
 		!FULL_OUTPUT_FIELDS.has(mutation.field) && !TAB_FIELDS.has(mutation.field));
 	const full = mutations.filter((mutation) =>
 		FULL_OUTPUT_FIELDS.has(mutation.field) || TAB_FIELDS.has(mutation.field));
+	let acknowledgement: ControlApplyAck | undefined;
 	for (const group of [
 		...(target.length > 0 ? [{ requestedCoverage: 'active-target' as const, mutations: target }] : []),
 		...(full.length > 0 ? [{ requestedCoverage: 'full' as const, mutations: full }] : []),
@@ -55,10 +59,12 @@ export async function submitHotkeyMutations(mutations: readonly ControlMutation[
 			mutations: group.mutations,
 		});
 		if (!response.ok) throw new Error(response.error.message);
+		acknowledgement = response.data;
 		const failure = Object.values(response.data.fields)
 			.find((field) => field?.phase !== 'applied');
 		if (failure) throw new Error(failure.lastError?.message ?? 'Hotkey control was not applied');
 	}
+	return acknowledgement;
 }
 
 export async function submitHotkeyOperation<O extends ControlOperation>(
@@ -75,13 +81,13 @@ export async function submitHotkeyOperation<O extends ControlOperation>(
 	return response.data as ControlOperationAck<O>;
 }
 
-export function sendVolumeAction(action: HotkeyAction, params?: HotkeyParams): Promise<void> {
+export function sendVolumeAction(action: HotkeyAction, params?: HotkeyParams): Promise<unknown> {
 	const step = Number.isFinite(params?.step) ? Math.abs(params!.step!) : 10;
 	switch (action) {
 		case 'volume_up':
-			return submitHotkeyOperation('effective-volume', { operation: 'delta', value: step }).then(() => undefined);
+			return submitHotkeyOperation('effective-volume', { operation: 'delta', value: step });
 		case 'volume_down':
-			return submitHotkeyOperation('effective-volume', { operation: 'delta', value: -step }).then(() => undefined);
+			return submitHotkeyOperation('effective-volume', { operation: 'delta', value: -step });
 		case 'volume_mute':
 			return submitHotkeyMutations([{ field: 'mediaMuted', operation: 'toggle' }]);
 		case 'volume_set':
@@ -89,7 +95,7 @@ export function sendVolumeAction(action: HotkeyAction, params?: HotkeyParams): P
 				? submitHotkeyOperation('effective-volume', {
 					operation: 'set',
 					value: Math.max(0, Math.min(800, params!.volume!)),
-				}).then(() => undefined)
+				})
 				: Promise.resolve();
 		default:
 			return Promise.resolve();
@@ -97,7 +103,7 @@ export function sendVolumeAction(action: HotkeyAction, params?: HotkeyParams): P
 }
 
 // eff: handles speed adjustment hotkeys through unified config flow
-export function sendSpeedAction(action: HotkeyAction, params?: HotkeyParams): Promise<void> {
+export function sendSpeedAction(action: HotkeyAction, params?: HotkeyParams): Promise<unknown> {
 	const step = Number.isFinite(params?.step) ? Math.abs(params!.step!) : 0.1;
 	switch (action) {
 		case 'speed_up': return submitHotkeyMutations([{ field: 'speed', operation: 'delta', value: step }]);
@@ -111,18 +117,18 @@ export function sendSpeedAction(action: HotkeyAction, params?: HotkeyParams): Pr
 	}
 }
 
-export function sendAudioAdjustment(action: HotkeyAction, params?: HotkeyParams): Promise<void> {
+export function sendAudioAdjustment(action: HotkeyAction, params?: HotkeyParams): Promise<unknown> {
 	const step = Number.isFinite(params?.step) ? Math.abs(params!.step!) : undefined;
 	let mutation: ControlMutation | null = null;
 	switch (action) {
 		case 'gain_up':
 			return submitHotkeyOperation('effective-volume', {
 				operation: 'delta', value: Math.min(8, step ?? 0.1) * 100,
-			}).then(() => undefined);
+			});
 		case 'gain_down':
 			return submitHotkeyOperation('effective-volume', {
 				operation: 'delta', value: -Math.min(8, step ?? 0.1) * 100,
-			}).then(() => undefined);
+			});
 		case 'delay_up': mutation = { field: 'delay', operation: 'delta', value: step ?? 10 }; break;
 		case 'delay_down': mutation = { field: 'delay', operation: 'delta', value: -(step ?? 10) }; break;
 		case 'delay_reset': mutation = { field: 'delay', operation: 'set', value: 0 }; break;
@@ -133,15 +139,4 @@ export function sendAudioAdjustment(action: HotkeyAction, params?: HotkeyParams)
 	}
 	if (!mutation) return Promise.resolve();
 	return submitHotkeyMutations([mutation]);
-}
-
-export async function toggleLoop(): Promise<void> {
-	await submitHotkeyMutations([{ field: 'loop', operation: 'toggle' }]);
-}
-
-export function sendTabAction(action: HotkeyAction): Promise<void> {
-	return submitHotkeyMutations([{
-		field: action === 'tab_pin' ? 'tabPinned' : 'tabMuted',
-		operation: 'toggle',
-	}]);
 }

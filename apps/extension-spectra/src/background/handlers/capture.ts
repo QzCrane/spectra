@@ -81,7 +81,7 @@ function beginCaptureReconciliation(): Promise<void> {
 	return reconciliation;
 }
 
-async function awaitCaptureReadiness(): Promise<void> {
+export async function ensureCaptureStatesReconciled(): Promise<void> {
 	const current = captureReadiness;
 	try {
 		await current;
@@ -233,7 +233,7 @@ async function publishAcknowledgedCaptureState(
 function serializeTransition<T>(tabId: number, operation: () => Promise<T>): Promise<T> {
 	const previous = transitions.get(tabId) ?? Promise.resolve();
 	const next = previous.catch(() => undefined).then(async () => {
-		await awaitCaptureReadiness();
+		await ensureCaptureStatesReconciled();
 		return operation();
 	});
 	transitions.set(tabId, next);

@@ -361,6 +361,13 @@ export function resolveAudioVolumeState(value: {
 		: 'native';
 }
 
+// post: identifies the only effective-volume boundary that can transfer audio
+// processor ownership. Presentation layers retain one complete value/tone pair
+// across this boundary until the actual processor ACK arrives.
+export function crossesAudioVolumeProcessorBoundary(from: number, to: number): boolean {
+	return (from > 100) !== (to > 100);
+}
+
 // goal: complete, side-effect-free status returned by the current document runtime
 export interface AudioRuntimeStatus {
   config: AudioConfig;

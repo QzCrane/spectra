@@ -1,6 +1,6 @@
 {
 	"name": "@nexus/extension-spectra",
-	"version": "1.4.0",
+	"version": "1.4.1",
 	"private": true,
 	"description": "SPECTRA - The Audio & Video Enhancement Extension",
 	"type": "module",
@@ -24,7 +24,7 @@
 	"devDependencies": {
 		"chrome-types": "^0.1.327",
 		"esbuild": "^0.27.2",
-		"sharp": "^0.34.5",
+		"sharp": "0.35.3",
 		"terser": "5.43.1",
 		"typescript": "^5.3.0"
 	}

@@ -15,8 +15,6 @@ import type { PolicyExecutor } from './policy-executor';
 import type { PolicyExecutorState } from '../types';
 import type { AudioRuntimeControlDelegate } from './native-media-executor';
 import type { FullscreenAudioHandoff } from '../core/fullscreen-audio-handoff';
-import type { SettingsManager } from '../core/settings-manager';
-import { showOSD, showSpeedOSD } from '../ui/osd';
 
 const AUDIO_RUNTIME_CONTROL_FIELDS = new Set<ControlDirectField>([
 	'audioEnabled',
@@ -50,7 +48,6 @@ function actualAudioEnabled(state: PolicyExecutorState): boolean {
 export function createAudioRuntimeControlDelegate(
 	policyExecutor: PolicyExecutor,
 	state: PolicyExecutorState,
-	settingsManager?: Pick<SettingsManager, 'get'>,
 	fullscreenHandoff?: Pick<FullscreenAudioHandoff, 'run'>,
 ): AudioRuntimeControlDelegate {
 	const synchronizeNative = (context: ControlActualContext): void => {
@@ -73,27 +70,6 @@ export function createAudioRuntimeControlDelegate(
 		if (typeof context.preservePitch === 'boolean') {
 			state.config.preservePitch = context.preservePitch;
 			state.appliedConfig.preservePitch = context.preservePitch;
-		}
-	};
-	const showNativeFeedback = (
-		context: ControlActualContext,
-		source: ControlIntent['source'],
-	): void => {
-		if (!settingsManager || source !== 'hotkey') return;
-		const settings = settingsManager.get();
-		const hasVolumeFeedback = typeof context.volumeBase === 'number'
-			|| typeof context.mediaMuted === 'boolean';
-		if (hasVolumeFeedback) {
-			showOSD(
-				state.config,
-				state.actualMode === 'capture' && state.phase === 'active',
-				settings,
-				false,
-			);
-			return;
-		}
-		if (typeof context.speed === 'number') {
-			showSpeedOSD(context.speed, settings, false);
 		}
 	};
 	const read = (fields: readonly ControlField[]): ControlPatch => {
@@ -159,7 +135,6 @@ export function createAudioRuntimeControlDelegate(
 		// Boost and speed. Pan/delay/mono hotkeys retain their listener-owned label
 		// instead of displaying a misleading volume OSD and then a second toast.
 		const persisted = await policyExecutor.updateConfig(changes, {
-			showOSD: changes.boost !== undefined && intent.source === 'hotkey',
 			...(intent.captureAdmission
 				? { captureAdmission: intent.captureAdmission }
 				: {}),
@@ -242,7 +217,6 @@ export function createAudioRuntimeControlDelegate(
 		apply,
 		read,
 		synchronizeNative,
-		showNativeFeedback,
 		...(fullscreenHandoff
 			? { runFullscreenTransition: fullscreenHandoff.run.bind(fullscreenHandoff) }
 			: {}),

@@ -105,6 +105,15 @@ function isFiniteInRange(value: unknown, minimum: number, maximum: number): valu
 	return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum;
 }
 
+function isAudioVolumeProjection(value: unknown): boolean {
+	return isRecord(value)
+		&& hasOnly(value, new Set(['effectiveVolume', 'volumeState']))
+		&& isFiniteInRange(value.effectiveVolume, 0, 800)
+		&& (value.volumeState === 'silent'
+			|| value.volumeState === 'native'
+			|| value.volumeState === 'capture');
+}
+
 function isBoundedString(value: unknown, maximum: number): value is string {
 	return typeof value === 'string' && value.length > 0 && value.length <= maximum;
 }
@@ -318,7 +327,8 @@ export function isUiControlSnapshot(value: unknown): value is ControlSnapshot {
 export function isUiControlApplyAck(value: unknown): value is ControlApplyAck {
 	return isRecord(value)
 		&& hasOnly(value, new Set([
-			'intentId', 'tabId', 'documentId', 'generation', 'revision', 'target', 'fields',
+			'intentId', 'tabId', 'documentId', 'generation', 'revision', 'target',
+			'fields', 'audioVolume',
 		]))
 		&& isBoundedString(value.intentId, 128)
 		&& isInteger(value.tabId, true)
@@ -326,14 +336,15 @@ export function isUiControlApplyAck(value: unknown): value is ControlApplyAck {
 		&& isInteger(value.generation)
 		&& isInteger(value.revision)
 		&& (value.target === null || isMediaTarget(value.target))
-		&& isControlFieldStates(value.fields);
+		&& isControlFieldStates(value.fields)
+		&& (value.audioVolume === undefined || isAudioVolumeProjection(value.audioVolume));
 }
 
 export function isUiControlOperationAck(value: unknown): value is ControlOperationAck {
 	return isRecord(value)
 		&& hasOnly(value, new Set([
 			'operationId', 'tabId', 'documentId', 'generation', 'revision', 'target',
-			'operation', 'strategy', 'coverage', 'fields', 'result',
+			'operation', 'strategy', 'coverage', 'fields', 'audioVolume', 'result',
 		]))
 		&& isBoundedString(value.operationId, 128)
 		&& isInteger(value.tabId, true)
@@ -348,5 +359,6 @@ export function isUiControlOperationAck(value: unknown): value is ControlOperati
 		&& typeof value.coverage === 'string'
 		&& COVERAGES.has(value.coverage)
 		&& isControlFieldStates(value.fields)
+		&& (value.audioVolume === undefined || isAudioVolumeProjection(value.audioVolume))
 		&& isOperationResult(value.operation as ControlOperation, value.result);
 }

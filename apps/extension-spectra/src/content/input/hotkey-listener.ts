@@ -1,22 +1,54 @@
 // goal: intercepts keyboard events for site-specific custom hotkeys
-// eff: zero-alloc hot path for keydown events
+// eff: non-candidates allocate nothing; each candidate owns one same-event tail
 
-import type { HotkeySettings, HotkeyBinding, SiteHotkeyConfig } from '@nexus/contracts';
+import type {
+	HotkeySettings,
+	HotkeyBinding,
+	SiteHotkeyConfig,
+} from '@nexus/contracts';
 import {
 	DEFAULT_HOTKEY_SETTINGS,
 	HOTKEY_ACTION_DESCRIPTORS,
 	findBestHostnameMatch,
 	isSpectraEventEnvelope,
 	normalizeHostname,
+	resolveAudioVolume,
+	resolveAudioVolumeState,
+	resolveSpectraHotkeyActualFeedback,
+	resolveSpectraDefaultHotkeyAction,
 } from '@nexus/contracts';
 import { createLogger } from '../../shared/logger';
 import { sendSpectraRequest } from '../../shared/spectra-client';
 import { createEventListener, createCleanupManager } from '../utils/timing';
 import { executeHotkeyAction } from './hotkey-actions';
-import { isTrustedHotkeyEvent } from './hotkey-event';
-import { hideToast, showToast } from '../ui/toast';
-import { hideOSD, showHotkeyActualOSD } from '../ui/osd';
+import {
+	createWebsiteFirstKeyboardArbiter,
+	isEditableHotkeyEvent,
+	isTrustedHotkeyEvent,
+} from './hotkey-event';
+import {
+	nextScalarGestureId,
+	subscribeDefaultScalarGesture,
+	subscribePhysicalHotkeyRelease,
+	type DefaultScalarGestureSignal,
+	type PhysicalHotkeyReleaseSignal,
+} from './default-scalar-gesture';
+import {
+	freezeHotkeyToast,
+	hideToast,
+	releaseHotkeyToast,
+	showToast,
+} from '../ui/toast';
+import {
+	advanceHotkeyTargetOSD,
+	claimHotkeyActualOSDGesture,
+	freezeHotkeyTargetOSD,
+	hideOSD,
+	releaseHotkeyTargetOSD,
+	showHotkeyActualOSD,
+} from '../ui/osd';
 import type { SettingsManager } from '../core/settings-manager';
+import type { PolicyExecutorState } from '../types';
 
 const log = createLogger('Hotkeys');
 
@@ -24,54 +56,70 @@ let settings: HotkeySettings = { ...DEFAULT_HOTKEY_SETTINGS };
 let cachedSite: SiteHotkeyConfig | null | undefined;
 let cachedBindings: Map<string, HotkeyBinding> | undefined;
 let lastHostname = '';
-const coalesced = new Map<string, ReturnType<typeof setTimeout>>();
-const inFlightBindings = new Set<string>();
-const releasedRepeatedBindings = new Set<string>();
-const activeBindingsByCode = new Map<string, { binding: HotkeyBinding; repeated: boolean }>();
-let keydownDisposer: (() => void) | null = null;
-let keyupDisposer: (() => void) | null = null;
-let contentSettings: Pick<SettingsManager, 'get'> | undefined;
-
-function cancelCoalesced(bindingId: string): void {
-	const timer = coalesced.get(bindingId);
-	if (!timer) return;
-	clearTimeout(timer);
-	coalesced.delete(bindingId);
+const inFlightGestures = new Set<string>();
+const releasedFeedbackGestures = new Set<string>();
+const pendingRepeatPulses = new Map<string, number>();
+const lastRepeatExecutionAt = new Map<string, number>();
+interface ActiveHotkeyBinding {
+	binding: HotkeyBinding;
+	repeated: boolean;
+	feedbackGesture: string;
 }
+const activeBindingsByCode = new Map<string, ActiveHotkeyBinding>();
+const MAX_REPEAT_BURST_PULSES = 160;
+const REPEAT_EXECUTION_INTERVAL_MS = 50;
+let keydownDisposer: (() => void) | null = null;
+let contentSettings: Pick<SettingsManager, 'get'> | undefined;
+let feedbackState: Pick<
+	PolicyExecutorState,
+	'appliedConfig' | 'actualMode' | 'phase'
+> | undefined;
 
 function cancelActiveBindings(): void {
-	for (const timer of coalesced.values()) clearTimeout(timer);
-	coalesced.clear();
+	for (const held of activeBindingsByCode.values()) {
+		if (inFlightGestures.has(held.feedbackGesture)) {
+			releasedFeedbackGestures.add(held.feedbackGesture);
+		} else {
+			releaseHotkeyToast(held.feedbackGesture);
+			releaseHotkeyTargetOSD(held.feedbackGesture);
+		}
+	}
 	activeBindingsByCode.clear();
-	releasedRepeatedBindings.clear();
+	pendingRepeatPulses.clear();
+	lastRepeatExecutionAt.clear();
 	hideToast();
-	hideOSD();
+	hideOSD(true);
 }
 
 function synchronizeKeydownListener(): void {
 	const shouldListen = getSiteConfig() !== null;
 	if (shouldListen && !keydownDisposer) {
-		keydownDisposer = createEventListener(document, 'keydown', handleKeydown as EventListener, true);
-		keyupDisposer = createEventListener(document, 'keyup', handleKeyup as EventListener, true);
+		keydownDisposer = createWebsiteFirstKeyboardArbiter({
+			type: 'keydown',
+			resolveCandidate: resolveSiteHotkeyBinding,
+			onSettled: (event, binding, websiteClaimed) => {
+				if (!websiteClaimed) handleKeydown(event, binding);
+			},
+		});
 	} else if (!shouldListen && keydownDisposer) {
 		cancelActiveBindings();
 		keydownDisposer();
 		keydownDisposer = null;
-		if (keyupDisposer) {
-			keyupDisposer();
-			keyupDisposer = null;
-		}
 	}
 }
 
 export async function initHotkeyListener(
 	settingsManager?: Pick<SettingsManager, 'get'>,
+	state?: Pick<PolicyExecutorState, 'appliedConfig' | 'actualMode' | 'phase'>,
 ): Promise<() => void> {
 	contentSettings = settingsManager;
+	feedbackState = state;
 	await loadSettings();
 	const cleanup = createCleanupManager();
 
+	cleanup.add(subscribePhysicalHotkeyRelease(releaseSiteHotkeys));
 	synchronizeKeydownListener();
+	cleanup.add(subscribeDefaultScalarGesture(handleDefaultScalarGesture));
 	cleanup.add(createEventListener(window, 'blur', cancelActiveBindings));
 	cleanup.add(createEventListener(window, 'pagehide', cancelActiveBindings));
 	cleanup.add(createEventListener(document, 'visibilitychange', () => {
@@ -83,11 +131,9 @@ export async function initHotkeyListener(
 	cleanup.add(() => {
 		keydownDisposer?.();
 		keydownDisposer = null;
-		if (keyupDisposer) {
-			keyupDisposer();
-			keyupDisposer = null;
-		}
 		cancelActiveBindings();
+		if (contentSettings === settingsManager) contentSettings = undefined;
+		if (feedbackState === state) feedbackState = undefined;
 	});
 
 	log.info('Hotkey listener initialized');
@@ -96,19 +142,27 @@ export async function initHotkeyListener(
 
 function handleSettingsEvent(message: unknown): false {
 	if (isSpectraEventEnvelope(message) && message.type === 'spectra.hotkey.target.feedback') {
-		const options = {
-			variant: 'alternate-target',
-			targetTitle: message.payload.targetTitle,
-			targetHostname: message.payload.targetHostname,
-		} as const;
+		const options = message.payload.targetTabId === message.tabId
+			? {}
+			: {
+				variant: 'alternate-target' as const,
+				targetTitle: message.payload.targetTitle,
+				targetHostname: message.payload.targetHostname,
+		};
 		if (message.payload.feedback && contentSettings) {
-			showHotkeyActualOSD(message.payload.feedback, contentSettings.get(), options);
+			showHotkeyActualOSD(
+				message.payload.feedback,
+				contentSettings.get(),
+				options,
+				message.payload.gesture,
+			);
 		} else {
 			showToast(formatLabel(message.payload.action), options);
 		}
 		return false;
 	}
 	if (isSpectraEventEnvelope(message) && message.type === 'spectra.hotkeys.changed') {
+		cancelActiveBindings();
 		settings = message.payload;
 		cachedSite = undefined;
 		cachedBindings = undefined;
@@ -163,14 +217,6 @@ function getBindingMap(site: SiteHotkeyConfig): Map<string, HotkeyBinding> {
 	return bindings;
 }
 
-const IGNORE_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
-
-function isInputElement(t: EventTarget | null): boolean {
-	if (!t || !(t instanceof HTMLElement)) return false;
-	if (t.isContentEditable) return true;
-	return IGNORE_TAGS.has(t.tagName);
-}
-
 // Browser navigation shortcuts always belong to the browser. Allowing a site
 // binding to claim them displayed SPECTRA feedback immediately before reload,
 // which looked like a toast emitted by the refreshed document.
@@ -179,33 +225,170 @@ function isBrowserRefreshShortcut(e: KeyboardEvent): boolean {
 		|| (e.code === 'KeyR' && !e.altKey && (e.ctrlKey || e.metaKey));
 }
 
-function isBindingActive(bindingId: string): boolean {
-	return [...activeBindingsByCode.values()].some(({ binding }) => binding.id === bindingId);
+function nextFeedbackGesture(): string {
+	return nextScalarGestureId('site');
 }
 
-function executeBinding(binding: HotkeyBinding, withOSD: boolean): void {
-	if (inFlightBindings.has(binding.id)) return;
-	inFlightBindings.add(binding.id);
+function volumeFeedback(value: number) {
+	const current = feedbackState!;
+	return {
+		kind: 'volume' as const,
+		value,
+		volumeState: resolveAudioVolumeState({
+			volume: value,
+			muted: current.appliedConfig.muted,
+			actualMode: current.actualMode,
+			phase: current.phase,
+		}),
+	};
+}
+
+function advanceScalarFeedbackTarget(
+	kind: 'speed' | 'volume',
+	delta: number,
+	gesture: string,
+): void {
+	if (!contentSettings || !feedbackState) return;
+	const baseline = kind === 'speed'
+		? { kind, value: feedbackState.appliedConfig.speed } as const
+		: volumeFeedback(resolveAudioVolume(feedbackState.appliedConfig).effectiveVolume);
+	advanceHotkeyTargetOSD(
+		baseline,
+		delta,
+		contentSettings.get(),
+		gesture,
+	);
+}
+
+function handleDefaultScalarGesture(signal: DefaultScalarGestureSignal): void {
+	const kind = signal.action.startsWith('speed_') ? 'speed' : 'volume';
+	if (signal.phase === 'release') {
+		if (signal.repeated) freezeHotkeyTargetOSD(signal.gesture);
+		return;
+	}
+	if (signal.phase === 'settled') {
+		releaseHotkeyTargetOSD(signal.gesture);
+		return;
+	}
+	claimHotkeyActualOSDGesture(signal.gesture);
+	if (signal.action === 'volume_mute') return;
+	if (!contentSettings || !feedbackState) return;
+	const direction = signal.action.endsWith('_up') ? 1 : -1;
+	const step = kind === 'speed' ? 0.1 : 10;
+	advanceScalarFeedbackTarget(kind, direction * step, signal.gesture);
+}
+
+function addRepeatPulse(gesture: string): void {
+	pendingRepeatPulses.set(
+		gesture,
+		Math.min(MAX_REPEAT_BURST_PULSES, (pendingRepeatPulses.get(gesture) ?? 0) + 1),
+	);
+}
+
+function takeRepeatPulses(gesture: string): number {
+	const pulses = pendingRepeatPulses.get(gesture) ?? 0;
+	pendingRepeatPulses.delete(gesture);
+	return pulses;
+}
+
+function coalescedBinding(binding: HotkeyBinding, pulses: number): HotkeyBinding {
+	if (pulses <= 1) return binding;
+	const step = Number.isFinite(binding.params?.step)
+		? Math.abs(binding.params!.step!)
+		: binding.action.startsWith('speed_') ? 0.1 : 10;
+	if (binding.action === 'speed_up' || binding.action === 'speed_down') {
+		return {
+			...binding,
+			params: {
+				...binding.params,
+				step: Math.min(16, Math.round(step * pulses * 1000) / 1000),
+			},
+		};
+	}
+	if (binding.action === 'volume_up' || binding.action === 'volume_down') {
+		return {
+			...binding,
+			params: { ...binding.params, step: Math.min(800, step * pulses) },
+		};
+	}
+	// Discrete repeatable operations coalesce to one execution; they cannot be
+	// converted into a larger scalar without changing their semantics.
+	return binding;
+}
+
+function scalarFeedbackDelta(binding: HotkeyBinding): number | null {
+	const step = Number.isFinite(binding.params?.step)
+		? Math.abs(binding.params!.step!)
+		: binding.action.startsWith('speed_') ? 0.1 : 10;
+	switch (binding.action) {
+		case 'speed_up':
+		case 'volume_up': return step;
+		case 'speed_down':
+		case 'volume_down': return -step;
+		default: return null;
+	}
+}
+
+function advanceBindingFeedbackTarget(
+	binding: HotkeyBinding,
+	gesture: string,
+): void {
+	const delta = scalarFeedbackDelta(binding);
+	if (delta === null) return;
+	const kind = binding.action.startsWith('speed_') ? 'speed' : 'volume';
+	advanceScalarFeedbackTarget(kind, delta, gesture);
+}
+
+function commitHotkeyActualFeedback(
+	binding: HotkeyBinding,
+	gesture: string,
+	result: unknown,
+): void {
+	if (!contentSettings) return;
+	const feedback = resolveSpectraHotkeyActualFeedback(binding.action, result);
+	if (!feedback) return;
+	showHotkeyActualOSD(
+		feedback,
+		contentSettings.get(),
+		{},
+		gesture,
+	);
+}
+
+function executeBinding(
+	binding: HotkeyBinding,
+	withOSD: boolean,
+	feedbackGesture: string,
+): void {
+	if (inFlightGestures.has(feedbackGesture)) return;
+	inFlightGestures.add(feedbackGesture);
 	const execution = withOSD
-		? executeWithOSD(binding)
-		: executeHotkeyAction(binding.action, binding.params).catch((error) => {
-			log.warn(`Hotkey ${binding.action} repeat failed`, error);
-		});
-	void execution.finally(() => {
-		inFlightBindings.delete(binding.id);
-		if (releasedRepeatedBindings.delete(binding.id)) {
-			hideToast();
-			hideOSD();
+		? executeWithOSD(binding, feedbackGesture)
+		: executeHotkeyAction(binding.action, binding.params);
+	void execution
+		.then((result) => commitHotkeyActualFeedback(binding, feedbackGesture, result))
+		.catch((error) => {
+			log.warn(`Hotkey ${binding.action} failed`, error);
+			if (withOSD) showToast(error instanceof Error ? error.message : String(error), {
+				shortcutGesture: feedbackGesture,
+			});
+		})
+		.finally(() => {
+		inFlightGestures.delete(feedbackGesture);
+		if (releasedFeedbackGestures.delete(feedbackGesture)) {
+			releaseHotkeyToast(feedbackGesture);
+			releaseHotkeyTargetOSD(feedbackGesture);
 		}
-	});
+		});
 }
 
-function handleKeydown(e: KeyboardEvent): void {
-	if (!isTrustedHotkeyEvent(e)) return;
-	if (isBrowserRefreshShortcut(e)) return;
+function resolveSiteHotkeyBinding(e: KeyboardEvent): HotkeyBinding | null {
+	if (!isTrustedHotkeyEvent(e)) return null;
+	if (isBrowserRefreshShortcut(e)) return null;
+	if (resolveSpectraDefaultHotkeyAction(e) !== null) return null;
 	const site = getSiteConfig();
-	if (!site) return;
-	if (e.composedPath().some((target) => isInputElement(target))) return;
+	if (!site) return null;
+	if (isEditableHotkeyEvent(e)) return null;
 
 	const binding = getBindingMap(site).get(bindingKey(
 		e.code,
@@ -214,88 +397,114 @@ function handleKeydown(e: KeyboardEvent): void {
 		e.shiftKey,
 		e.metaKey,
 	));
-	if (!binding) return;
+	if (!binding) return null;
 	const descriptor = HOTKEY_ACTION_DESCRIPTORS[binding.action];
-	if (e.repeat && descriptor.repeatPolicy !== 'coalesce-20hz') return;
+	if (e.repeat && (descriptor.repeatPolicy !== 'coalesce-20hz'
+		|| !activeBindingsByCode.has(e.code))) return null;
+	return binding;
+}
+
+function handleKeydown(e: KeyboardEvent, binding: HotkeyBinding): void {
+	const descriptor = HOTKEY_ACTION_DESCRIPTORS[binding.action];
 	e.preventDefault();
-	e.stopPropagation();
-	const active = activeBindingsByCode.get(e.code);
-	activeBindingsByCode.set(e.code, {
+	if (!e.repeat) releaseSiteHotkeys({ code: e.code });
+	const active = e.repeat ? activeBindingsByCode.get(e.code) : undefined;
+	const held: ActiveHotkeyBinding = {
 		binding,
 		repeated: e.repeat || active?.repeated === true,
-	});
+		feedbackGesture: active?.feedbackGesture ?? nextFeedbackGesture(),
+	};
+	if (!e.repeat && descriptor.repeatPolicy === 'coalesce-20hz') {
+		advanceBindingFeedbackTarget(binding, held.feedbackGesture);
+	}
+	activeBindingsByCode.set(e.code, held);
 	if (descriptor.repeatPolicy !== 'coalesce-20hz' || !e.repeat) {
 		// First press (non-repeat) OR a non-coalesce action: execute immediately
 		// WITH the OSD toast. The toast is the once-per-press signal that the
 		// hotkey fired — it must not be re-shown on every keydown repeat, or the
 		// OSD floods and appears "stuck on" while the user holds the key.
-		executeBinding(binding, true);
+		executeBinding(binding, true, held.feedbackGesture);
 		return;
 	}
-	// Repeat keydown under coalesce-20hz: throttle the action to ~20 Hz (50 ms)
-	// and execute it WITHOUT the toast. The initial press already showed the
-	// OSD; re-showing it on every repeat floods the toast and creates phantom
-	// "drift" toasts after keyup because pending executeWithOSD promises keep
-	// resolving. The 50 ms timer is cleared on keyup so no queued action fires
-	// after the user releases the key.
-	if (coalesced.has(binding.id) || inFlightBindings.has(binding.id)) return;
-	coalesced.set(binding.id, setTimeout(() => {
-		coalesced.delete(binding.id);
-		if (!isBindingActive(binding.id)) return;
-		executeBinding(binding, false);
-	}, 50));
+	advanceBindingFeedbackTarget(held.binding, held.feedbackGesture);
+	// Only a new physical repeat may consume accumulated pulses. There is no
+	// trailing action timer, so even an unobservable keyup cannot create motion
+	// after the physical event stream has stopped.
+	addRepeatPulse(held.feedbackGesture);
+	if (inFlightGestures.has(held.feedbackGesture)) return;
+	const lastExecutionAt = lastRepeatExecutionAt.get(held.feedbackGesture);
+	if (lastExecutionAt !== undefined
+		&& e.timeStamp - lastExecutionAt < REPEAT_EXECUTION_INTERVAL_MS) return;
+	lastRepeatExecutionAt.set(held.feedbackGesture, e.timeStamp);
+	executeBinding(
+		coalescedBinding(binding, takeRepeatPulses(held.feedbackGesture)),
+		false,
+		held.feedbackGesture,
+	);
 }
 
-function handleKeyup(e: KeyboardEvent): void {
-	if (!isTrustedHotkeyEvent(e)) return;
+function modifierForCode(code: string): keyof HotkeyBinding['key']['modifiers'] | null {
+	return code.startsWith('Control') ? 'ctrl'
+		: code.startsWith('Alt') ? 'alt'
+			: code.startsWith('Shift') ? 'shift'
+				: code.startsWith('Meta') ? 'meta'
+					: null;
+}
+
+function releaseSiteHotkeys(signal: PhysicalHotkeyReleaseSignal): void {
 	let releasedRepeated = false;
-	const active = activeBindingsByCode.get(e.code);
+	const released: ActiveHotkeyBinding[] = [];
+	const active = activeBindingsByCode.get(signal.code);
 	if (active) {
-		activeBindingsByCode.delete(e.code);
-		cancelCoalesced(active.binding.id);
+		activeBindingsByCode.delete(signal.code);
+		pendingRepeatPulses.delete(active.feedbackGesture);
+		lastRepeatExecutionAt.delete(active.feedbackGesture);
 		releasedRepeated = active.repeated;
-		if (active.repeated && inFlightBindings.has(active.binding.id)) {
-			releasedRepeatedBindings.add(active.binding.id);
-		}
+		released.push(active);
 	}
 
-	const modifier = e.code.startsWith('Control') ? 'ctrl'
-		: e.code.startsWith('Alt') ? 'alt'
-			: e.code.startsWith('Shift') ? 'shift'
-				: e.code.startsWith('Meta') ? 'meta'
-					: null;
+	const modifier = modifierForCode(signal.code);
 	if (modifier) {
 		for (const [code, held] of activeBindingsByCode) {
 			if (!held.binding.key.modifiers[modifier]) continue;
 			activeBindingsByCode.delete(code);
-			cancelCoalesced(held.binding.id);
+			pendingRepeatPulses.delete(held.feedbackGesture);
+			lastRepeatExecutionAt.delete(held.feedbackGesture);
 			releasedRepeated ||= held.repeated;
-			if (held.repeated && inFlightBindings.has(held.binding.id)) {
-				releasedRepeatedBindings.add(held.binding.id);
-			}
+			released.push(held);
 		}
 	}
 
-	// A tap keeps its short feedback window; a held shortcut disappears at keyup.
+	// A tap keeps its original window. A held shortcut stops moving at keyup,
+	// commits its final frame, and receives a fresh readable display window.
 	if (releasedRepeated && ![...activeBindingsByCode.values()].some((held) => held.repeated)) {
-		hideToast();
-		hideOSD();
+		for (const held of released) {
+			if (!held.repeated) continue;
+			freezeHotkeyToast(held.feedbackGesture);
+			freezeHotkeyTargetOSD(held.feedbackGesture);
+		}
+	}
+	for (const held of released) {
+		if (inFlightGestures.has(held.feedbackGesture)) {
+			releasedFeedbackGestures.add(held.feedbackGesture);
+		} else {
+			releaseHotkeyToast(held.feedbackGesture);
+			releaseHotkeyTargetOSD(held.feedbackGesture);
+		}
 	}
 }
 
-async function executeWithOSD(b: HotkeyBinding): Promise<void> {
+async function executeWithOSD(b: HotkeyBinding, feedbackGesture: string): Promise<unknown> {
 	const action = b.action;
 	const feedbackOwner = HOTKEY_ACTION_DESCRIPTORS[action].feedbackOwner;
+	if (feedbackOwner === 'actual-osd') {
+		claimHotkeyActualOSDGesture(feedbackGesture);
+	}
 	// Show toast immediately for instant feedback, before awaiting the action
 	if (feedbackOwner === 'listener-label') {
-		showToast(formatLabel(action, b.params));
+		showToast(formatLabel(action, b.params), { shortcutGesture: feedbackGesture });
 	}
-	try {
-		await executeHotkeyAction(action, b.params);
-	} catch (error) {
-		log.warn(`Hotkey ${action} failed`, error);
-		showToast(error instanceof Error ? error.message : String(error));
-	}
+	return executeHotkeyAction(action, b.params);
 }
 
 function formatLabel(action: string, p?: { step?: number }): string {

@@ -274,6 +274,15 @@ export function analyzeProductionArtifacts({ distDir, metafiles = [] }) {
 		try {
 			const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 			graph = productionGraph(index, manifest);
+			const serviceWorker = manifest.background?.service_worker;
+			if (typeof serviceWorker === 'string') {
+				const workerClosure = bundleFootprint(root, serviceWorker);
+				if (workerClosure.files.length !== 1) {
+					failures.push(
+						`${serviceWorker}: MV3 service worker must be one self-contained bundle`,
+					);
+				}
+			}
 		} catch (error) {
 			failures.push(error instanceof Error ? error.message : String(error));
 		}

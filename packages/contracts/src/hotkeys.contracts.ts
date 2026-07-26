@@ -1,77 +1,14 @@
 // goal: contract for hotkey management including actions, bindings, and configurations
 
-import type { ControlCapability } from './control.contracts.js';
-
-// Bindable actions list
-export const HOTKEY_ACTIONS = [
-	'none',
-	// Playback
-	'play_pause',
-	'seek_forward_5s',
-	'seek_forward_10s',
-	'seek_forward_30s',
-	'seek_backward_5s',
-	'seek_backward_10s',
-	'seek_backward_30s',
-	'seek_frame_forward',
-	'seek_frame_backward',
-	// Speed
-	'speed_up',
-	'speed_down',
-	'speed_reset',
-	'speed_set',
-	// Volume
-	'volume_up',
-	'volume_down',
-	'volume_mute',
-	'volume_set',
-	// Audio
-	'audio_reset',
-	'gain_up',
-	'gain_down',
-	'pitch_up',
-	'pitch_down',
-	'pitch_reset',
-	'delay_up',
-	'delay_down',
-	'delay_reset',
-	'pan_left',
-	'pan_right',
-	'pan_reset',
-	'mono_toggle',
-	'capture_toggle',
-	// Video
-	'fullscreen_toggle',
-	'pip_toggle',
-	'rotate_cw',
-	'rotate_ccw',
-	'mirror_toggle',
-	'screenshot',
-	'dim_background',
-	// Markers & loops
-	'marker_add',
-	'marker_jump_prev',
-	'marker_jump_next',
-	'ab_set_a',
-	'ab_set_b',
-	'ab_clear',
-	'ab_skip',
-	'loop_toggle',
-	// FX Filters
-	'fx_toggle',
-	'fx_reset',
-	// Tab state
-	'tab_pin',
-	'tab_mute',
-	// Misc
-	'show_info',
-	'open_popup',
-	'open_options',
-	'run_js',
-	'open_url',
-] as const;
-
-export type HotkeyAction = typeof HOTKEY_ACTIONS[number];
+import type { AudioVolumeState } from './audio.contracts.js';
+import type {
+	ControlApplyAck,
+	ControlCapability,
+} from './control.contracts.js';
+import {
+	SPECTRA_DEFAULT_HOTKEY_ACTIONS,
+	resolveSpectraDefaultHotkeyAction,
+} from './spectra.bootstrap.js';
 
 export type HotkeyAvailability = 'enabled' | 'no-op' | 'disabled-legacy';
 export type HotkeyRepeatPolicy = 'coalesce-20hz' | 'ignore-repeat' | 'single';
@@ -163,17 +100,57 @@ export const HOTKEY_ACTION_DESCRIPTORS = {
 	open_options: descriptor('open-options', 'none'),
 	run_js: descriptor('run-user-script', 'none', 'ignore-repeat', false, 'script'),
 	open_url: descriptor('open-url', 'none', 'ignore-repeat', false, 'url'),
-} as const satisfies Record<HotkeyAction, HotkeyActionDescriptor>;
+} as const satisfies Record<string, HotkeyActionDescriptor>;
+
+export type HotkeyAction = keyof typeof HOTKEY_ACTION_DESCRIPTORS;
+
+// The descriptor table is the sole persisted-action key owner. Object.keys
+// preserves its declaration order, so the historical public list API remains
+// stable without a second hand-maintained action vocabulary.
+export const HOTKEY_ACTIONS: readonly HotkeyAction[] = Object.freeze(
+	Object.keys(HOTKEY_ACTION_DESCRIPTORS) as HotkeyAction[],
+);
+
+export type SpectraHotkeyActualFeedback =
+	| { kind: 'volume'; value: number; volumeState: AudioVolumeState }
+	| { kind: 'speed'; value: number };
+
+export function resolveSpectraHotkeyActualFeedback(
+	action: HotkeyAction,
+	acknowledgement: unknown,
+): SpectraHotkeyActualFeedback | undefined {
+	if (HOTKEY_ACTION_DESCRIPTORS[action].feedbackOwner !== 'actual-osd'
+		|| typeof acknowledgement !== 'object'
+		|| acknowledgement === null) return undefined;
+	const candidate = acknowledgement as Partial<
+		Pick<ControlApplyAck, 'fields' | 'audioVolume'>
+	>;
+	if (action.startsWith('speed_')) {
+		const speed = candidate.fields?.speed?.actual;
+		return typeof speed === 'number' ? { kind: 'speed', value: speed } : undefined;
+	}
+	const audioVolume = candidate.audioVolume;
+	return audioVolume ? {
+		kind: 'volume',
+		value: audioVolume.effectiveVolume,
+		volumeState: audioVolume.volumeState,
+	} : undefined;
+}
 
 const HOTKEY_ACTION_SET: ReadonlySet<string> = new Set(HOTKEY_ACTIONS);
+const DEFAULT_HOTKEY_ACTION_SET: ReadonlySet<string> = new Set(SPECTRA_DEFAULT_HOTKEY_ACTIONS);
 
-// Chrome command slots cannot persist action parameters. Keep this runtime
-// predicate beside the exhaustive descriptor table so storage normalization,
-// settings patches and command dispatch enforce exactly one boundary.
+// Chrome command slots expose neither physical keyup nor action parameters.
+// Keep this runtime predicate beside the exhaustive descriptor table so
+// storage normalization, settings patches and command dispatch enforce one
+// capability boundary: held/coalesced actions belong to page KeyboardEvents.
 export function isSlotHotkeyAction(action: unknown): action is HotkeyAction {
 	if (typeof action !== 'string' || !HOTKEY_ACTION_SET.has(action)) return false;
 	const descriptor = HOTKEY_ACTION_DESCRIPTORS[action as HotkeyAction];
-	return descriptor.availability !== 'disabled-legacy' && descriptor.parameter === 'none';
+	return descriptor.availability !== 'disabled-legacy'
+		&& !DEFAULT_HOTKEY_ACTION_SET.has(action)
+		&& descriptor.parameter === 'none'
+		&& descriptor.repeatPolicy !== 'coalesce-20hz';
 }
 
 export interface KeyModifiers {
@@ -189,6 +166,19 @@ export interface KeyCombo {
 	modifiers: KeyModifiers;
 }
 
+// The bootstrap resolver owns the only built-in chord table. Settings,
+// persistence and Options project KeyCombo into that resolver instead of
+// copying the five reserved combinations into another layer.
+export function isSpectraDefaultHotkeyKeyCombo(key: KeyCombo): boolean {
+	return resolveSpectraDefaultHotkeyAction({
+		code: key.code,
+		altKey: key.modifiers.alt,
+		ctrlKey: key.modifiers.ctrl,
+		shiftKey: key.modifiers.shift,
+		metaKey: key.modifiers.meta,
+	}) !== null;
+}
+
 export interface HotkeyBinding {
 	id: string;
 	enabled: boolean;
@@ -196,7 +186,7 @@ export interface HotkeyBinding {
 	action: HotkeyAction;
 	params?: HotkeyParams;
 	conditions?: HotkeyConditions;
-	disabledReason?: 'unsupported_action';
+	disabledReason?: 'unsupported_action' | 'reserved_default_chord';
 }
 
 export interface HotkeyParams {
@@ -281,17 +271,8 @@ export const DEFAULT_MODIFIERS: Readonly<KeyModifiers> = {
 	ctrl: false, alt: false, shift: false, meta: false,
 } as const;
 
-// DEFAULT_SLOTS: maps manifest.json command names to actions
-export const DEFAULT_SLOTS: SlotMapping = {
-	volume_up: 'volume_up',
-	volume_down: 'volume_down',
-	toggle_mute: 'volume_mute',
-	speed_up: 'speed_up',
-};
-
 export const DEFAULT_HOTKEY_SETTINGS: Readonly<HotkeySettings> = {
-	slots: DEFAULT_SLOTS,
+	// The five shipped defaults are page-owned so websites can win conflicts.
+	slots: {},
 	sites: {},
 } as const;
-
-export { PRESET_BINDINGS } from './hotkeys.presets.js';

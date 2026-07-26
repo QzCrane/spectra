@@ -1,25 +1,39 @@
 // goal: transient visual notifications
+import { activateFeedbackSurface, createFeedbackSurface } from './feedback-surface';
+
 const s: {
 	host: HTMLElement | null;
 	root: ShadowRoot | null;
 	timer: ReturnType<typeof setTimeout> | null;
-} = { host: null, root: null, timer: null };
+	shortcutGesture: string | null;
+} = { host: null, root: null, timer: null, shortcutGesture: null };
 
 export interface ToastOptions {
 	variant?: 'alternate-target';
 	targetTitle?: string;
 	targetHostname?: string;
+	shortcutGesture?: string;
+}
+
+const TOAST_HIDE_DELAY_MS = 1_800;
+
+function scheduleToastHide(toast: HTMLElement): void {
+	if (s.timer) clearTimeout(s.timer);
+	s.timer = setTimeout(() => {
+		toast.classList.add('hide');
+		s.timer = null;
+	}, TOAST_HIDE_DELAY_MS);
 }
 
 export function showToast(msg: string, options: ToastOptions = {}): void {
 	if (!document.documentElement) return;
 	if (!s.host?.isConnected || !s.root) {
-		const h = document.createElement('div');
-		h.id = 'spectra-toast-host';
-		h.style.cssText = 'position:fixed;top:20%;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
-		document.documentElement.appendChild(h);
-
-		const ws = h.attachShadow({ mode: 'open' });
+		const surface = createFeedbackSurface(
+			'spectra-toast-host',
+			'position:fixed;top:20%;left:50%;transform:translateX(-50%);z-index:2147483647',
+		);
+		const h = surface.host;
+		const ws = surface.root;
 		const st = document.createElement('style');
 		// note: toast must appear INSTANTLY (no fade-in delay). Only fade OUT when hiding.
 		// The previous `transition:0.3s;opacity:0` initial state caused a 300ms perceived delay.
@@ -39,6 +53,7 @@ export function showToast(msg: string, options: ToastOptions = {}): void {
 		s.host = h;
 		s.root = ws;
 	}
+	activateFeedbackSurface(s.host);
 
 	const t = s.root.getElementById('t');
 	const txt = s.root.getElementById('txt');
@@ -51,19 +66,35 @@ export function showToast(msg: string, options: ToastOptions = {}): void {
 	meta.textContent = alternate
 		? `↗ ${options.targetTitle || options.targetHostname || ''}${options.targetTitle && options.targetHostname ? ` · ${options.targetHostname}` : ''}`
 		: '';
+	s.shortcutGesture = options.shortcutGesture ?? null;
 	// Force reflow then remove hide class so toast appears INSTANTLY.
 	t.classList.remove('hide');
 	// Force browser to apply the visible state synchronously before scheduling hide.
 	void t.offsetHeight;
-	if (s.timer) clearTimeout(s.timer);
-	s.timer = setTimeout(() => t.classList.add('hide'), 1_800);
+	scheduleToastHide(t);
 }
 
-// eff: ends shortcut feedback immediately when a held shortcut is released.
+// Keyup freezes a held label and restarts its readable display window. It does
+// not share ownership with cancellation of the underlying shortcut writer.
+export function freezeHotkeyToast(gesture: string): void {
+	if (s.shortcutGesture !== gesture) return;
+	const toast = s.root?.getElementById('t');
+	if (!toast) return;
+	toast.classList.remove('hide');
+	void toast.offsetHeight;
+	scheduleToastHide(toast);
+}
+
+export function releaseHotkeyToast(gesture: string): void {
+	if (s.shortcutGesture === gesture) s.shortcutGesture = null;
+}
+
+// eff: hides feedback immediately only when its UI lifecycle actually ends.
 export function hideToast(): void {
 	if (s.timer) {
 		clearTimeout(s.timer);
 		s.timer = null;
 	}
+	s.shortcutGesture = null;
 	s.root?.getElementById('t')?.classList.add('hide');
 }

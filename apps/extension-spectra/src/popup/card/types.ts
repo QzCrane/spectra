@@ -6,6 +6,7 @@ import { DEFAULT_AUDIO_CONFIG } from '@nexus/kernel';
 import type {
   AudioSessionError,
   AudioSessionPhase,
+  AudioVolumeState,
   DomainEntry,
   SpectraAudioMode,
 } from '@nexus/contracts';
@@ -17,7 +18,10 @@ export interface CardInternalState {
   stableConfig: AudioConfig;
   controlSnapshot: ControlSnapshot | null;
   isCaptureActive: boolean;
-  processorTransitionPending?: boolean;
+  volumeTransitionPresentation?: {
+    effectiveVolume: number;
+    volumeState: AudioVolumeState;
+  };
   userInteracted: boolean;
   isRestrictedSite: boolean;
   actualMode: SpectraAudioMode;

@@ -7,6 +7,7 @@ import {
 	HOTKEY_ACTIONS,
 	HOTKEY_ACTION_DESCRIPTORS,
 	isHotkeyParamsForAction,
+	isSpectraDefaultHotkeyKeyCombo,
 	isSlotHotkeyAction,
 	SPECTRA_SETTINGS_SCHEMA_VERSION,
 	findBestHostnameMatch,
@@ -31,7 +32,6 @@ const SITE_SETTINGS_KEY = 'siteSettings';
 const GLOBAL_PRESETS_KEY = 'globalPresets';
 const DEFAULT_PRESET_KEY = 'defaultPresetId';
 const META_KEY = 'spectraSettingsMeta';
-export const SETTINGS_WRITE_DEBOUNCE_MS = 250;
 const MAX_PAUSE_RETENTION_SECONDS = 86_400;
 const UNSUPPORTED_ACTIONS = new Set<HotkeyAction>(
 	HOTKEY_ACTIONS.filter((action) => HOTKEY_ACTION_DESCRIPTORS[action].availability === 'disabled-legacy'),
@@ -106,6 +106,11 @@ function applyHotkeySiteMutation(
 		}
 		case 'upsert-binding': {
 			const site = requireSite(sites, domain);
+			if (isSpectraDefaultHotkeyKeyCombo(mutation.binding.key)) {
+				throw new InvalidSettingsPatchError(
+					'Built-in SPECTRA shortcut chords cannot be assigned to site hotkeys',
+				);
+			}
 			disabledLegacyBindings = disabledLegacyBindings.filter(({ id }) => id !== mutation.binding.id);
 			const sanitized = sanitizeSite(
 				{ enabled: site.enabled, bindings: [mutation.binding] },
@@ -209,22 +214,75 @@ function sanitizeBinding(value: unknown): HotkeyBinding | null {
 	if (!isHotkeyParamsForAction(binding.action, value.params)) return null;
 	if (value.params) binding.params = { ...value.params };
 	if (isRecord(value.conditions)) binding.conditions = { ...value.conditions };
-	if (value.disabledReason === 'unsupported_action') binding.disabledReason = value.disabledReason;
+	if (value.disabledReason === 'unsupported_action'
+		|| value.disabledReason === 'reserved_default_chord') {
+		binding.disabledReason = value.disabledReason;
+	}
 	return binding;
 }
 
-function sanitizeSite(value: unknown, disabledLegacy: HotkeyBinding[]): SiteHotkeyConfig {
+function upsertDisabledLegacyBinding(
+	disabledLegacy: HotkeyBinding[],
+	binding: HotkeyBinding,
+): 'inserted' | 'updated' | 'unchanged' {
+	const candidate = structuredClone(binding);
+	const index = disabledLegacy.findIndex(({ id }) => id === candidate.id);
+	if (index < 0) {
+		disabledLegacy.push(candidate);
+		return 'inserted';
+	}
+	if (JSON.stringify(disabledLegacy[index]) === JSON.stringify(candidate)) return 'unchanged';
+	disabledLegacy[index] = candidate;
+	return 'updated';
+}
+
+function canonicalizeBindingDisability(binding: HotkeyBinding): {
+	reason: HotkeyBinding['disabledReason'];
+	changed: boolean;
+} {
+	const previousEnabled = binding.enabled;
+	const previousReason = binding.disabledReason;
+	if (isSpectraDefaultHotkeyKeyCombo(binding.key)) {
+		binding.enabled = false;
+		binding.disabledReason = 'reserved_default_chord';
+		return {
+			reason: binding.disabledReason,
+			changed: previousEnabled !== binding.enabled || previousReason !== binding.disabledReason,
+		};
+	}
+	if (UNSUPPORTED_ACTIONS.has(binding.action) || binding.disabledReason === 'unsupported_action') {
+		binding.enabled = false;
+		binding.disabledReason = 'unsupported_action';
+		return {
+			reason: binding.disabledReason,
+			changed: previousEnabled !== binding.enabled || previousReason !== binding.disabledReason,
+		};
+	}
+	if (binding.disabledReason === 'reserved_default_chord') delete binding.disabledReason;
+	return {
+		reason: undefined,
+		changed: previousReason !== binding.disabledReason,
+	};
+}
+
+function sanitizeSite(
+	value: unknown,
+	disabledLegacy: HotkeyBinding[],
+	onRepair?: () => void,
+): SiteHotkeyConfig {
 	const source = isRecord(value) ? value : {};
 	const bindings = Array.isArray(source.bindings)
 		? source.bindings.map(sanitizeBinding).filter((binding): binding is HotkeyBinding => !!binding)
 		: [];
 	for (const binding of bindings) {
-		if (UNSUPPORTED_ACTIONS.has(binding.action) || binding.disabledReason === 'unsupported_action') {
-			binding.enabled = false;
-			binding.disabledReason = 'unsupported_action';
-			if (!disabledLegacy.some((legacy) => legacy.id === binding.id)) {
-				disabledLegacy.push({ ...binding, key: { ...binding.key, modifiers: { ...binding.key.modifiers } } });
-			}
+		const result = canonicalizeBindingDisability(binding);
+		if (!result.reason) {
+			if (result.changed) onRepair?.();
+			continue;
+		}
+		const legacyResult = upsertDisabledLegacyBinding(disabledLegacy, binding);
+		if (result.changed || legacyResult !== 'unchanged') {
+			onRepair?.();
 		}
 	}
 	return { enabled: source.enabled === true, bindings };
@@ -242,30 +300,50 @@ function mergeHotkeySites(left: SiteHotkeyConfig | undefined, right: SiteHotkeyC
 	};
 }
 
-function normalizeHotkeySettings(raw: unknown): HotkeySettings {
+function normalizeHotkeySettings(raw: unknown): {
+	settings: HotkeySettings;
+	requiresPersistence: boolean;
+} {
 	const source = isRecord(raw) ? raw : {};
 	const normalized = cloneDefaultHotkeys();
+	let requiresPersistence = false;
 	if (isRecord(source.slots)) {
 		for (const [command, action] of Object.entries(source.slots)) {
 			if (isSlotHotkeyAction(action)) normalized.slots[command] = action;
 		}
 	}
 
-	const disabledLegacy = Array.isArray(source.disabledLegacyBindings)
-		? source.disabledLegacyBindings.map(sanitizeBinding).filter((binding): binding is HotkeyBinding => !!binding)
-		: [];
+	const disabledLegacy: HotkeyBinding[] = [];
+	if (Array.isArray(source.disabledLegacyBindings)) {
+		for (const candidate of source.disabledLegacyBindings) {
+			const binding = sanitizeBinding(candidate);
+			if (!binding) continue;
+			const result = canonicalizeBindingDisability(binding);
+			if (!result.reason) {
+				if (result.changed) requiresPersistence = true;
+				continue;
+			}
+			const duplicate = disabledLegacy.some(({ id }) => id === binding.id);
+			const legacyResult = upsertDisabledLegacyBinding(disabledLegacy, binding);
+			if (duplicate || result.changed || legacyResult === 'updated') {
+				requiresPersistence = true;
+			}
+		}
+	}
 	if (isRecord(source.sites)) {
 		for (const [rawDomain, site] of Object.entries(source.sites)) {
 			const domain = normalizeHostname(rawDomain);
 			if (!domain) continue;
 			normalized.sites[domain] = mergeHotkeySites(
 				normalized.sites[domain],
-				sanitizeSite(site, disabledLegacy),
+				sanitizeSite(site, disabledLegacy, () => {
+					requiresPersistence = true;
+				}),
 			);
 		}
 	}
 	normalized.disabledLegacyBindings = disabledLegacy;
-	return normalized;
+	return { settings: normalized, requiresPersistence };
 }
 
 function normalizeSiteSettings(raw: unknown): Record<string, unknown> | null {
@@ -564,8 +642,6 @@ function parseMeta(raw: unknown): SettingsMeta | null {
 
 export class SettingsRepository {
 	private operationQueue: Promise<void> = Promise.resolve();
-	private pendingWrite: Record<string, unknown> | null = null;
-	private writeTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(private readonly storageArea?: SettingsStorageArea) {}
 
@@ -609,7 +685,7 @@ export class SettingsRepository {
 	}
 
 	flush(): Promise<void> {
-		return this.serialized(() => this.flushPendingWrite());
+		return this.serialized(async () => undefined);
 	}
 
 	applyPatch(patch: SettingsPatch, expectedRevision?: number): Promise<SettingsSnapshot> {
@@ -742,7 +818,7 @@ export class SettingsRepository {
 					? false
 					: previousMeta?.legacyThemeModeMissing,
 			};
-			this.scheduleWrite({
+			await this.local.set({
 				[GLOBAL_KEY]: { ...rawGlobal, ...globalSettings },
 				[HOTKEY_KEY]: { ...rawHotkeys, ...hotkeySettings },
 				[SITE_SETTINGS_KEY]: siteSettings,
@@ -774,7 +850,7 @@ export class SettingsRepository {
 		const previousMeta = parseMeta(result[META_KEY]);
 		if (!previousMeta?.legacyThemeModeMissing) return current;
 		if (candidate === null) {
-			this.scheduleWrite({
+			await this.local.set({
 				[META_KEY]: { ...previousMeta, legacyThemeModeMissing: false },
 			});
 			return current;
@@ -783,7 +859,7 @@ export class SettingsRepository {
 		const rawGlobal = isRecord(result[GLOBAL_KEY]) ? result[GLOBAL_KEY] : {};
 		const globalSettings = this.applyGlobalPatch(current.globalSettings, { themeMode: candidate });
 		const revision = current.revision + 1;
-		this.scheduleWrite({
+		await this.local.set({
 			[GLOBAL_KEY]: { ...rawGlobal, ...globalSettings },
 			[META_KEY]: {
 				...previousMeta,
@@ -833,7 +909,8 @@ export class SettingsRepository {
 		let meta = parseMeta(result[META_KEY]);
 		const requiresMigration = meta === null;
 		const globalSettings = normalizeGlobalSettings(result[GLOBAL_KEY], requiresMigration);
-		const hotkeySettings = normalizeHotkeySettings(result[HOTKEY_KEY]);
+		const hotkeyNormalization = normalizeHotkeySettings(result[HOTKEY_KEY]);
+		const hotkeySettings = hotkeyNormalization.settings;
 		const normalizedSiteSettings = normalizeSiteSettings(result[SITE_SETTINGS_KEY]) ?? {};
 		const normalizedPresets = normalizePresetState(
 			result[GLOBAL_PRESETS_KEY],
@@ -878,6 +955,11 @@ export class SettingsRepository {
 				legacyThemeModeMissing: !Object.hasOwn(rawGlobal, 'themeMode'),
 			};
 			await this.local.set({ [META_KEY]: meta });
+		} else if (hotkeyNormalization.requiresPersistence) {
+			const rawHotkeys = isRecord(result[HOTKEY_KEY]) ? result[HOTKEY_KEY] : {};
+			await this.local.set({
+				[HOTKEY_KEY]: { ...rawHotkeys, ...hotkeySettings },
+			});
 		}
 		if (!meta) throw new Error('Settings metadata was not initialized');
 
@@ -892,44 +974,7 @@ export class SettingsRepository {
 	}
 
 	private async readValues(keys: string[]): Promise<Record<string, unknown>> {
-		const result = await this.local.get(keys);
-		if (!this.pendingWrite) return result;
-		for (const storageKey of keys) {
-			if (Object.hasOwn(this.pendingWrite, storageKey)) {
-				result[storageKey] = this.pendingWrite[storageKey];
-			}
-		}
-		return result;
-	}
-
-	private scheduleWrite(values: Record<string, unknown>): void {
-		this.pendingWrite = { ...(this.pendingWrite ?? {}), ...values };
-		this.armWriteTimer();
-	}
-
-	private armWriteTimer(): void {
-		if (this.writeTimer !== null) clearTimeout(this.writeTimer);
-		this.writeTimer = setTimeout(() => {
-			this.writeTimer = null;
-			void this.flush().catch(() => undefined);
-		}, SETTINGS_WRITE_DEBOUNCE_MS);
-	}
-
-	private async flushPendingWrite(): Promise<void> {
-		if (this.writeTimer !== null) {
-			clearTimeout(this.writeTimer);
-			this.writeTimer = null;
-		}
-		const pending = this.pendingWrite;
-		if (!pending) return;
-		this.pendingWrite = null;
-		try {
-			await this.local.set(pending);
-		} catch (error) {
-			this.pendingWrite = { ...pending, ...(this.pendingWrite ?? {}) };
-			this.armWriteTimer();
-			throw error;
-		}
+		return this.local.get(keys);
 	}
 
 	private serialized<T>(operation: () => Promise<T>): Promise<T> {

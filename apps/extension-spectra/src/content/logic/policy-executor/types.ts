@@ -11,7 +11,6 @@ export interface PolicyApplicationOptions {
 }
 
 export interface PolicyUpdateOptions {
-	showOSD?: boolean;
 	isNativeSync?: boolean;
 	captureAdmission?: CaptureAdmission;
 }

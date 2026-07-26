@@ -1,5 +1,12 @@
 // goal: authoritative, per-field control protocol shared by every SPECTRA surface
 
+import {
+	resolveAudioVolumeState,
+	type AudioSessionPhase,
+	type AudioVolumeState,
+	type SpectraAudioMode,
+} from './audio.contracts.js';
+
 export const CONTROL_STRATEGIES = [
 	'observe',
 	'page-native',
@@ -760,6 +767,77 @@ export type ControlFieldStates = {
 	[K in ControlField]?: ControlFieldState<ControlValues[K]>;
 };
 
+export interface ControlAudioVolumeProjection {
+	effectiveVolume: number;
+	volumeState: AudioVolumeState;
+}
+
+// Processor field ACKs are the transaction-local lifecycle proof consumed by
+// Popup, shortcut feedback and every other projection. Thresholds never imply
+// Capture, and a neutral release wins only when no active processor remains.
+export function resolveAcknowledgedProcessorLifecycle(
+	fields: ControlFieldStates,
+): { actualMode: SpectraAudioMode; phase: AudioSessionPhase } | null {
+	const processorStates = Object.entries(fields)
+		.filter(([field, state]) => state !== undefined
+			&& (CONTROL_ALGORITHM_POLICIES[
+				field as keyof typeof CONTROL_ALGORITHM_POLICIES
+			].acknowledgements as readonly ControlAcknowledgement[])
+				.includes('processor-readback'))
+		.map(([, state]) => state!);
+	const revision = processorStates.reduce(
+		(latest, field) => Math.max(latest, field.revision),
+		-1,
+	);
+	const latest = processorStates.filter((field) => field.revision === revision);
+	if (latest.some((field) => (
+		field.phase === 'applied' && field.strategy === 'capture'
+	))) return { actualMode: 'capture', phase: 'active' };
+	if (latest.some((field) => (
+		field.phase === 'applied' && field.strategy === 'media-webaudio'
+	))) return { actualMode: 'webaudio', phase: 'active' };
+	if (latest.some((field) => (
+		(field.phase === 'applied' || field.phase === 'idle')
+		&& field.strategy === 'observe'
+		&& !field.controlled
+	))) return { actualMode: 'bypass', phase: 'idle' };
+	return null;
+}
+
+export function resolveAcknowledgedAudioVolumeState(
+	fields: ControlFieldStates,
+	effectiveVolume: number,
+	muted: boolean,
+): AudioVolumeState {
+	const lifecycle = resolveAcknowledgedProcessorLifecycle(fields);
+	return resolveAudioVolumeState({
+		volume: effectiveVolume,
+		muted,
+		actualMode: lifecycle?.actualMode ?? 'bypass',
+		phase: lifecycle?.phase ?? 'idle',
+	});
+}
+
+export function resolveControlAudioVolume(
+	fields: ControlFieldStates,
+): ControlAudioVolumeProjection | null {
+	const volumeBase = fields.volumeBase?.actual;
+	const boost = fields.boost?.actual;
+	const mediaMuted = fields.mediaMuted?.actual;
+	if (typeof volumeBase !== 'number'
+		|| typeof boost !== 'number'
+		|| typeof mediaMuted !== 'boolean') return null;
+	const effectiveVolume = compileEffectiveVolume(volumeBase, boost);
+	return {
+		effectiveVolume,
+		volumeState: resolveAcknowledgedAudioVolumeState(
+			fields,
+			effectiveVolume,
+			mediaMuted,
+		),
+	};
+}
+
 export interface ControlIntent {
 	intentId: string;
 	tabId: number;
@@ -906,6 +984,7 @@ export type ControlOperationAck<O extends ControlOperation = ControlOperation> =
 		strategy: ControlStrategy;
 		coverage: ControlCoverage;
 		fields: ControlFieldStates;
+		audioVolume?: ControlAudioVolumeProjection;
 		result: ControlOperationResultMap[K];
 	};
 }[O];
@@ -937,6 +1016,7 @@ export interface ControlApplyAck {
 	revision: number;
 	target: MediaTarget | null;
 	fields: ControlFieldStates;
+	audioVolume?: ControlAudioVolumeProjection;
 }
 
 export interface ControlReadRequest {
@@ -1004,7 +1084,7 @@ const operationIntentKeys = new Set([
 ]);
 const operationAckKeys = new Set([
 	'operationId', 'tabId', 'documentId', 'generation', 'revision', 'target',
-	'operation', 'strategy', 'coverage', 'fields', 'result',
+	'operation', 'strategy', 'coverage', 'fields', 'audioVolume', 'result',
 ]);
 const ackKeys = new Set<keyof ControlApplyAck>([
 	'intentId',
@@ -1014,6 +1094,7 @@ const ackKeys = new Set<keyof ControlApplyAck>([
 	'revision',
 	'target',
 	'fields',
+	'audioVolume',
 ]);
 const readRequestKeys = new Set<keyof ControlReadRequest>(['fields', 'target']);
 const readResultKeys = new Set<keyof ControlReadResult>(['target', 'patch', 'observedStrategies']);
@@ -1058,6 +1139,9 @@ const actualContextKeys = new Set<keyof ControlActualContext>([
 	'volumeBase', 'mediaMuted', 'speed', 'preservePitch',
 ]);
 const abLoopKeys = new Set<keyof ABLoopState>(['pointA', 'pointB', 'enabled']);
+const audioVolumeKeys = new Set<keyof ControlAudioVolumeProjection>([
+	'effectiveVolume', 'volumeState',
+]);
 const operationSet: ReadonlySet<string> = new Set(CONTROL_OPERATIONS);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1078,6 +1162,17 @@ function isFiniteInRange(value: unknown, minimum: number, maximum: number): valu
 
 function isBoundedString(value: unknown, maximum: number): value is string {
 	return typeof value === 'string' && value.length > 0 && value.length <= maximum;
+}
+
+function isControlAudioVolumeProjection(
+	value: unknown,
+): value is ControlAudioVolumeProjection {
+	return isRecord(value)
+		&& hasOnlyKeys(value, audioVolumeKeys)
+		&& isFiniteInRange(value.effectiveVolume, 0, 800)
+		&& (value.volumeState === 'silent'
+			|| value.volumeState === 'native'
+			|| value.volumeState === 'capture');
 }
 
 function isCanonicalOrigin(value: unknown): value is string {
@@ -1102,9 +1197,6 @@ export function splitEffectiveVolume(volume: number): { volumeBase: number; boos
 		? { volumeBase: normalized, boost: 1 }
 		: { volumeBase: 100, boost: normalized / 100 };
 }
-
-/** @deprecated One-release v1 name. Use splitEffectiveVolume. */
-export const splitLegacyVolume = splitEffectiveVolume;
 
 export function classifyControlStrategy(strategy: ControlStrategy): ControlStrategyClass {
 	return CONTROL_STRATEGY_RULES[strategy].class;
@@ -1516,6 +1608,8 @@ export function isControlOperationAck(value: unknown): value is ControlOperation
 		&& typeof value.coverage === 'string'
 		&& coverageSet.has(value.coverage)
 		&& isControlFieldStates(value.fields)
+		&& (value.audioVolume === undefined
+			|| isControlAudioVolumeProjection(value.audioVolume))
 		&& isOperationResult(value.operation as ControlOperation, value.result);
 }
 
@@ -1563,7 +1657,9 @@ export function isControlApplyAck(value: unknown): value is ControlApplyAck {
 		&& isSafeNonNegativeInteger(value.generation)
 		&& isSafeNonNegativeInteger(value.revision)
 		&& (value.target === null || isMediaTarget(value.target))
-		&& isControlFieldStates(value.fields);
+		&& isControlFieldStates(value.fields)
+		&& (value.audioVolume === undefined
+			|| isControlAudioVolumeProjection(value.audioVolume));
 }
 
 export function isControlReadRequest(value: unknown): value is ControlReadRequest {

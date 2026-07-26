@@ -1,6 +1,6 @@
 {
 	"name": "spectra",
-	"version": "1.4.0",
+	"version": "1.4.1",
 	"private": true,
 	"type": "module",
 	"description": "SPECTRA - The Audio & Video Enhancement Extension",
@@ -13,7 +13,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "2.5.3",
 		"chrome-types": "^0.1.327",
-		"sharp": "^0.34.5",
+		"sharp": "0.35.3",
 		"turbo": "2.10.5",
 		"typescript": "^5.3.0"
 	},

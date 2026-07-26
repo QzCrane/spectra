@@ -13,16 +13,24 @@ import {
 	isAudioSessionSnapshot,
 	isDefaultAudioConfig,
 	resolveAudioVolume,
+	resolveAudioVolumeState,
+	crossesAudioVolumeProcessorBoundary,
 } from './audio.contracts.js';
 import { findBestHostnameMatch, normalizeHostname } from './domain.contracts.js';
 import {
 	DEFAULT_HOTKEY_SETTINGS,
 	HOTKEY_ACTION_DESCRIPTORS,
 	isHotkeyParamsForAction,
+	isSpectraDefaultHotkeyKeyCombo,
+	resolveSpectraHotkeyActualFeedback,
 } from './hotkeys.contracts.js';
 import { createSiteRouteFingerprint } from './registry.contracts.js';
 import { isHotkeySettings } from './settings.contracts.js';
-import { SPECTRA_PROTOCOL_VERSION } from './spectra.bootstrap.js';
+import {
+	SPECTRA_CONTENT_RUNTIME_REVISION,
+	SPECTRA_PROTOCOL_VERSION,
+	resolveSpectraDefaultHotkeyAction,
+} from './spectra.bootstrap.js';
 import type {
 	ControlField,
 	ControlOperation,
@@ -42,17 +50,21 @@ export {
 	DEFAULT_AUDIO_CONFIG,
 	DEFAULT_HOTKEY_SETTINGS,
 	HOTKEY_ACTION_DESCRIPTORS,
+	SPECTRA_CONTENT_RUNTIME_REVISION,
 	SPECTRA_PROTOCOL_VERSION,
 	createSiteRouteFingerprint,
 	findBestHostnameMatch,
 	isAudioConfig,
 	isDefaultAudioConfig,
 	isHotkeyParamsForAction,
+	isSpectraDefaultHotkeyKeyCombo,
 	normalizeHostname,
 	resolveAudioVolume,
+	resolveAudioVolumeState,
+	crossesAudioVolumeProcessorBoundary,
+	resolveSpectraDefaultHotkeyAction,
+	resolveSpectraHotkeyActualFeedback,
 };
-
-export const SPECTRA_CONTENT_RUNTIME_REVISION = '3.3.3' as const;
 
 // One-release legacy capture event adapter. Keeping the single literal avoids
 // shipping the unrelated Nexus/Halo action table into every page runtime.
@@ -369,19 +381,23 @@ export function isSpectraEventEnvelope(value: unknown): value is SpectraEventEnv
 	if (value.type === 'spectra.hotkeys.changed') return isHotkeySettings(value.payload);
 	if (value.type === 'spectra.hotkey.target.feedback') return isInteger(value.tabId, true)
 		&& isRecord(value.payload)
-		&& hasOnly(value.payload, new Set(['action', 'targetTabId', 'targetTitle', 'targetHostname', 'feedback']))
+		&& hasOnly(value.payload, new Set([
+			'action', 'targetTabId', 'targetTitle', 'targetHostname', 'gesture', 'feedback',
+		]))
 		&& typeof value.payload.action === 'string'
 		&& Object.hasOwn(HOTKEY_ACTION_DESCRIPTORS, value.payload.action)
 		&& isInteger(value.payload.targetTabId, true)
 		&& isBoundedString(value.payload.targetTitle, 512)
 		&& isBoundedString(value.payload.targetHostname, 253)
+		&& (value.payload.gesture === undefined || isBoundedString(value.payload.gesture, 128))
 		&& (value.payload.feedback === undefined || (
 			isRecord(value.payload.feedback)
 			&& (value.payload.feedback.kind === 'volume'
-				? hasOnly(value.payload.feedback, new Set(['kind', 'value', 'muted', 'capture']))
+				? hasOnly(value.payload.feedback, new Set(['kind', 'value', 'volumeState']))
 					&& isFiniteInRange(value.payload.feedback.value, 0, 800)
-					&& typeof value.payload.feedback.muted === 'boolean'
-					&& typeof value.payload.feedback.capture === 'boolean'
+					&& (value.payload.feedback.volumeState === 'silent'
+						|| value.payload.feedback.volumeState === 'native'
+						|| value.payload.feedback.volumeState === 'capture')
 				: value.payload.feedback.kind === 'speed'
 					&& hasOnly(value.payload.feedback, new Set(['kind', 'value']))
 					&& isFiniteInRange(value.payload.feedback.value, 0.1, 16))
@@ -411,13 +427,22 @@ function isControlAck(value: unknown, operation = false): boolean {
 		|| !isInteger(value.generation)
 		|| !isInteger(value.revision)
 		|| (value.target !== null && !isMediaTarget(value.target))
-		|| !isControlFieldStates(value.fields)) return false;
+		|| !isControlFieldStates(value.fields)
+		|| (value.audioVolume !== undefined && !(
+			isRecord(value.audioVolume)
+			&& hasOnly(value.audioVolume, new Set(['effectiveVolume', 'volumeState']))
+			&& isFiniteInRange(value.audioVolume.effectiveVolume, 0, 800)
+			&& (value.audioVolume.volumeState === 'silent'
+				|| value.audioVolume.volumeState === 'native'
+				|| value.audioVolume.volumeState === 'capture')
+		))) return false;
 	if (!operation) return hasOnly(value, new Set([
-		'intentId', 'tabId', 'documentId', 'generation', 'revision', 'target', 'fields',
+		'intentId', 'tabId', 'documentId', 'generation', 'revision', 'target',
+		'fields', 'audioVolume',
 	]));
 	return hasOnly(value, new Set([
 		'operationId', 'tabId', 'documentId', 'generation', 'revision', 'target',
-		'operation', 'strategy', 'coverage', 'fields', 'result',
+		'operation', 'strategy', 'coverage', 'fields', 'audioVolume', 'result',
 	]))
 		&& typeof value.operation === 'string'
 		&& STRATEGIES.has(value.strategy as ControlStrategy)

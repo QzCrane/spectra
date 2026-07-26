@@ -87,14 +87,11 @@ export function setupLifecycleListeners(): void {
 	});
 	chrome.webNavigation.onCommitted.addListener((details) => {
 		if (!isTopLevelDocumentNavigation(details) || !details.documentId) return;
-		let origin = '';
-		try { origin = new URL(details.url).origin; } catch { return; }
-		if (origin === 'null') return;
-		void storage.tabSession.rebind(details.tabId, {
-			tabId: details.tabId,
-			documentId: details.documentId,
-			origin,
-		}).catch(() => undefined);
+		let identity: ReturnType<typeof storage.tabSession.identity>;
+		try {
+			identity = storage.tabSession.identity(details.tabId, details.documentId, details.url);
+		} catch { return; }
+		void storage.tabSession.rebind(details.tabId, identity).catch(() => undefined);
 	});
 	chrome.webNavigation.onHistoryStateUpdated.addListener(notifySameDocumentNavigation);
 	chrome.webNavigation.onReferenceFragmentUpdated.addListener(notifySameDocumentNavigation);

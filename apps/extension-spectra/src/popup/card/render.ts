@@ -19,12 +19,13 @@ export interface RenderParams {
 // post: returns a sync-render function that updates HTML elements, CSS variables, and canvas overlays based on current state
 export function createRenderFn(params: RenderParams): () => void {
   const { ui, state, drawEqCurve, getVizEnabled } = params;
+  let volumeTransitionWasPending = false;
 
   return () => {
     if (!ui.card) return;
 
     const config = state.config;
-    const volume = resolveAudioVolume(config);
+    const volumePresentation = resolveVolumePresentation(state);
     const disabled = !config.enabled;
     const muted = config.muted;
 
@@ -44,32 +45,31 @@ export function createRenderFn(params: RenderParams): () => void {
     // rule: always update slider to reflect actual state, but preserve user's dragging position
     // by only updating when the value has actually changed significantly
     const currentSliderValue = parseFloat(ui.slider.value);
-    const newSliderValue = volume.effectiveVolume;
+    const newSliderValue = volumePresentation.effectiveVolume;
+    const volumeTransitionPending = state.volumeTransitionPresentation !== undefined;
+    const volumeTransitionCommitted = volumeTransitionWasPending && !volumeTransitionPending;
     // Only update if not dragging OR if the difference is significant (> 5%)
-    if (!state.isDragging || Math.abs(currentSliderValue - newSliderValue) > 5) {
+    if (volumeTransitionPending
+      || volumeTransitionCommitted
+      || !state.isDragging
+      || Math.abs(currentSliderValue - newSliderValue) > 5) {
       ui.slider.value = String(newSliderValue);
     }
+    volumeTransitionWasPending = volumeTransitionPending;
     ui.fill.style.width = `${(newSliderValue / AUDIO_UI.MAX_VOLUME) * 100}%`;
-    ui.val.innerText = muted ? 'MUTE' : `${formatVolume(volume.effectiveVolume)}%`;
+    ui.val.innerText = muted ? 'MUTE' : `${formatVolume(newSliderValue)}%`;
     ui.mute.classList.toggle('active', muted);
 		ui.mute.setAttribute('aria-pressed', String(muted));
 
-    // Color reports the acknowledged runtime, never a guessed threshold:
-    // >100% can remain blue when Media WebAudio is the actual safe strategy.
-		const fillColor = state.processorTransitionPending
-			? COLORS.PENDING
-			: actualVolumeColor(
-      muted,
-      volume.effectiveVolume,
-      state.actualMode,
-      state.phase,
-    );
+    // A threshold crossing presents the previous complete ACK until value and
+    // processor lifecycle can switch together; no guessed or third-state color.
+		const fillColor = volumePresentation.color;
 
     ui.fill.style.backgroundColor = fillColor;
     ui.val.style.color = fillColor;
     ui.slider.style.setProperty('--slider-accent', fillColor);
 
-    renderVolumeIcon(ui.mute, muted, volume.effectiveVolume);
+    renderVolumeIcon(ui.mute, muted, newSliderValue);
 
     if (ui.comp) ui.comp.checked = config.compressor;
     if (ui.bass) ui.bass.checked = config.bass;
@@ -132,6 +132,32 @@ function renderVolumeIcon(
   }
 
   muteBtn.replaceChildren(iconSpan);
+}
+
+export function resolveVolumePresentation(
+  state: CardInternalState,
+): { effectiveVolume: number; color: string } {
+  const transition = state.volumeTransitionPresentation;
+  if (transition) {
+    return {
+      effectiveVolume: transition.effectiveVolume,
+      color: transition.volumeState === 'silent'
+        ? COLORS.MUTED
+        : transition.volumeState === 'capture'
+          ? COLORS.CAPTURE
+          : COLORS.NATIVE,
+    };
+  }
+  const effectiveVolume = resolveAudioVolume(state.config).effectiveVolume;
+  return {
+    effectiveVolume,
+    color: actualVolumeColor(
+      state.config.muted,
+      effectiveVolume,
+      state.actualMode,
+      state.phase,
+    ),
+  };
 }
 
 function formatVolume(volume: number): string {

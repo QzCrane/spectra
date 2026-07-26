@@ -340,6 +340,41 @@ async function handleHostSync(
 	}
 }
 
+async function handleHostStatusChange(
+	message: Extract<RemoteHostEvent, { type: 'REMOTE_HOST_STATUS_CHANGE' }>,
+): Promise<void> {
+	const authorization = await authorizeHostEvent(message);
+	if (!authorization) return;
+	authorization.session.connected = message.connected;
+	if (message.connected) {
+		await acquireRemoteObservation(authorization.session);
+		await syncState(authorization.session.tabId);
+	} else {
+		releaseRemoteObservation(authorization.session.tabId);
+	}
+	publishRemoteChanged(
+		authorization.session.tabId,
+		authorization.session.sessionId,
+		message.connected,
+	);
+}
+
+function keepHostEventAlive(
+	operation: Promise<void>,
+	sendResponse: (response: unknown) => void,
+): true {
+	void operation.then(
+		() => sendResponse({ settled: true }),
+		(error: unknown) => {
+			console.warn(LOG, 'Host event failed', error);
+			sendResponse({ settled: false });
+		},
+	);
+	// A response channel is the MV3 lifetime owner for work which must survive
+	// the async restore/authentication boundary after a service-worker restart.
+	return true;
+}
+
 async function closeTabSession(tabId: number): Promise<void> {
 	closingTabs.add(tabId);
 	let lastError: unknown;
@@ -444,32 +479,13 @@ export function initRemoteService(): void {
 		if (!isOffscreenHostEvent(message)) return false;
 
 		if (message.type === 'REMOTE_HOST_EXECUTE_COMMAND') {
-			void handleHostCommand(message);
-			return false;
+			return keepHostEventAlive(handleHostCommand(message), sendResponse);
 		}
 		if (message.type === 'REMOTE_HOST_REQUEST_SYNC') {
-			void handleHostSync(message);
-			return false;
+			return keepHostEventAlive(handleHostSync(message), sendResponse);
 		}
 		if (message.type === 'REMOTE_HOST_STATUS_CHANGE') {
-			void authorizeHostEvent(message).then((authorization) => {
-				if (authorization && typeof message.connected === 'boolean') {
-					authorization.session.connected = message.connected;
-					if (message.connected) {
-						void acquireRemoteObservation(authorization.session)
-							.then(() => syncState(authorization.session.tabId))
-							.catch(() => undefined);
-					} else {
-						releaseRemoteObservation(authorization.session.tabId);
-					}
-					publishRemoteChanged(
-						authorization.session.tabId,
-						authorization.session.sessionId,
-						message.connected,
-					);
-				}
-			});
-			return false;
+			return keepHostEventAlive(handleHostStatusChange(message), sendResponse);
 		}
 		if (message.type === 'REMOTE_HOST_SESSION_CLOSED') {
 			const known = authorizations.get(message.tabId);

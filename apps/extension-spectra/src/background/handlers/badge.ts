@@ -24,8 +24,6 @@ interface BadgeUpdate {
 
 type BadgeAuthority = 'control' | 'session' | 'legacy';
 type BadgeIdentity = Pick<ControlSnapshot, 'documentId' | 'origin' | 'generation'>;
-const USED_BADGE_PLACEHOLDER = '•';
-const USED_BADGE_PLACEHOLDER_COLOR = '#94a3b8';
 
 async function applyBadgeForTab(
 	tabId: number,
@@ -97,24 +95,10 @@ async function resolveStickyUsage(tabId: number, userInteracted: boolean | undef
 	return userInteracted ? markBadgeUsed(tabId) : hasBadgeUsage(tabId);
 }
 
-// post: every successful plugin action makes usage visible immediately. Until
-// an audio ACK exists, a neutral dot reports only the truthful usage fact and
-// does not guess a volume, mute state, or Capture color.
+// post: successful plugin use remains sticky without inventing presentation.
+// Rendering starts only after a complete acknowledged volume projection exists.
 export async function markBadgeUsedForTab(tabId: number): Promise<void> {
 	await markBadgeUsed(tabId);
-	if (badgeState.get(tabId)?.userInteracted || !await isTabExists(tabId)) return;
-	try {
-		// Chrome retains the last per-tab projection across document and worker
-		// replacement. Do not replace a truthful numeric ACK with the placeholder
-		// merely because this worker has not reconstructed its volatile mirror yet.
-		const currentText = await chrome.action.getBadgeText?.({ tabId }).catch(() => '');
-		if (currentText) return;
-		await chrome.action.setBadgeText({ tabId, text: USED_BADGE_PLACEHOLDER });
-		await chrome.action.setBadgeBackgroundColor({ tabId, color: USED_BADGE_PLACEHOLDER_COLOR });
-		await chrome.action.setBadgeTextColor({ tabId, color: BADGE_COLORS.WHITE });
-	} catch {
-		return;
-	}
 }
 
 // Chrome may clear the visible per-tab Action projection on navigation even
